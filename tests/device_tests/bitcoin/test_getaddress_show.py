@@ -20,6 +20,12 @@ from trezorlib import btc, messages, tools
 from trezorlib.debuglink import TrezorClientDebugLink as Client
 from trezorlib.exceptions import Cancelled, TrezorFailure
 
+from ...input_flows import (
+    InputFlowShowAddressQRCode,
+    InputFlowShowAddressQRCodeCancel,
+    InputFlowShowMultisigXPUBs,
+)
+
 VECTORS = (  # path, script_type, address
     (
         "m/44h/0h/12h/0/0",
@@ -43,22 +49,22 @@ VECTORS = (  # path, script_type, address
     ),
 )
 
-CORNER_BUTTON = (215, 25)
-
 
 @pytest.mark.skip_t2
+@pytest.mark.skip_tr
 @pytest.mark.parametrize("path, script_type, address", VECTORS)
 def test_show_t1(
     client: Client, path: str, script_type: messages.InputScriptType, address: str
 ):
-    def input_flow():
+    def input_flow_t1():
         yield
         client.debug.press_no()
         yield
         client.debug.press_yes()
 
     with client:
-        client.set_input_flow(input_flow)
+        # This is the only place where even T1 is using input flow
+        client.set_input_flow(input_flow_t1)
         assert (
             btc.get_address(
                 client,
@@ -72,27 +78,18 @@ def test_show_t1(
 
 
 @pytest.mark.skip_t1
+@pytest.mark.parametrize("chunkify", (True, False))
 @pytest.mark.parametrize("path, script_type, address", VECTORS)
 def test_show_tt(
-    client: Client, path: str, script_type: messages.InputScriptType, address: str
+    client: Client,
+    chunkify: bool,
+    path: str,
+    script_type: messages.InputScriptType,
+    address: str,
 ):
-    def input_flow():
-        yield
-        client.debug.click(CORNER_BUTTON, wait=True)
-        yield
-        client.debug.swipe_left(wait=True)
-        client.debug.swipe_right(wait=True)
-        client.debug.swipe_left(wait=True)
-        client.debug.click(CORNER_BUTTON, wait=True)
-        yield
-        client.debug.press_no()
-        yield
-        client.debug.press_no()
-        yield
-        client.debug.press_yes()
-
     with client:
-        client.set_input_flow(input_flow)
+        IF = InputFlowShowAddressQRCode(client)
+        client.set_input_flow(IF.get())
         assert (
             btc.get_address(
                 client,
@@ -100,6 +97,7 @@ def test_show_tt(
                 tools.parse_path(path),
                 script_type=script_type,
                 show_display=True,
+                chunkify=chunkify,
             )
             == address
         )
@@ -110,19 +108,9 @@ def test_show_tt(
 def test_show_cancel(
     client: Client, path: str, script_type: messages.InputScriptType, address: str
 ):
-    def input_flow():
-        yield
-        client.debug.click(CORNER_BUTTON, wait=True)
-        yield
-        client.debug.swipe_left(wait=True)
-        client.debug.click(CORNER_BUTTON, wait=True)
-        yield
-        client.debug.press_no()
-        yield
-        client.debug.press_yes()
-
     with client, pytest.raises(Cancelled):
-        client.set_input_flow(input_flow)
+        IF = InputFlowShowAddressQRCodeCancel(client)
+        client.set_input_flow(IF.get())
         btc.get_address(
             client,
             "Bitcoin",
@@ -242,8 +230,6 @@ VECTORS_MULTISIG = (  # script_type, bip48_type, address, xpubs, ignore_xpub_mag
 )
 
 
-# NOTE: contains wait_layout race that manifests on hw sometimes
-@pytest.mark.flaky(max_runs=5)
 @pytest.mark.skip_t1
 @pytest.mark.multisig
 @pytest.mark.parametrize(
@@ -273,45 +259,11 @@ def test_show_multisig_xpubs(
     )
 
     for i in range(3):
-
-        def input_flow():
-            yield  # show address
-            layout = client.debug.wait_layout()  # TODO: do not need to *wait* now?
-            assert layout.get_title() == "RECEIVE ADDRESS (MULTISIG)"
-            assert layout.get_content().replace(" ", "") == address
-
-            client.debug.click(CORNER_BUTTON)
-            yield  # show QR code
-            assert "Qr" in client.debug.wait_layout().text
-
-            client.debug.swipe_left()
-            # address details
-            layout = client.debug.wait_layout()
-            assert "Multisig 2 of 3" in layout.text
-
-            # Three xpub pages with the same testing logic
-            for xpub_num in range(3):
-                expected_title = f"MULTISIG XPUB #{xpub_num + 1}  " + (
-                    "(YOURS)" if i == xpub_num else "(COSIGNER)"
-                )
-
-                client.debug.swipe_left()
-                layout = client.debug.wait_layout()
-                assert layout.get_title() == expected_title
-                content = layout.get_content().replace(" ", "")
-                assert xpubs[xpub_num] in content
-
-            client.debug.click(CORNER_BUTTON)
-            yield  # show address
-            client.debug.press_no()
-            yield  # address mismatch
-            client.debug.press_no()
-            yield  # show address
-            client.debug.press_yes()
-
         with client:
+            IF = InputFlowShowMultisigXPUBs(client, address, xpubs, i)
+            client.set_input_flow(IF.get())
+            client.debug.synchronize_at("Homescreen")
             client.watch_layout()
-            client.set_input_flow(input_flow)
             btc.get_address(
                 client,
                 "Bitcoin",

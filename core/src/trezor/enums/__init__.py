@@ -63,6 +63,10 @@ if TYPE_CHECKING:
         FirmwareHash = 89
         UnlockPath = 93
         UnlockedPathRequest = 94
+        ShowDeviceTutorial = 95
+        UnlockBootloader = 96
+        AuthenticateDevice = 97
+        AuthenticityProof = 98
         SetU2FCounter = 63
         GetNextU2FCounter = 80
         NextU2FCounter = 81
@@ -112,6 +116,7 @@ if TYPE_CHECKING:
         DebugLinkRecordScreen = 9003
         DebugLinkEraseSdCard = 9005
         DebugLinkWatchLayout = 9006
+        DebugLinkResetDebugEvents = 9007
         EthereumGetPublicKey = 450
         EthereumPublicKey = 451
         EthereumGetAddress = 56
@@ -408,8 +413,9 @@ if TYPE_CHECKING:
         PromptTemporarily = 2
 
     class HomescreenFormat(IntEnum):
-        Toif144x144 = 1
-        Jpeg240x240 = 2
+        Toif = 1
+        Jpeg = 2
+        ToiG = 3
 
     class Capability(IntEnum):
         Bitcoin = 1
@@ -454,6 +460,15 @@ if TYPE_CHECKING:
         NO = 0
         YES = 1
         INFO = 2
+
+    class DebugPhysicalButton(IntEnum):
+        LEFT_BTN = 0
+        MIDDLE_BTN = 1
+        RIGHT_BTN = 2
+
+    class EthereumDefinitionType(IntEnum):
+        NETWORK = 0
+        TOKEN = 1
 
     class EthereumDataType(IntEnum):
         UINT = 1

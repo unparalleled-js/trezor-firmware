@@ -1,39 +1,25 @@
 mod ffi {
     extern "C" {
         // trezorhal/common.c
-        pub fn shutdown() -> !;
+        pub fn trezor_shutdown() -> !;
     }
 }
 
 use crate::ui::screens::screen_fatal_error;
-#[cfg(not(feature = "bootloader"))]
-use heapless::String;
-
-#[cfg(not(feature = "bootloader"))]
-use crate::ui::util::u32_to_str;
 
 fn shutdown() -> ! {
-    unsafe { ffi::shutdown() }
+    unsafe { ffi::trezor_shutdown() }
 }
 
 #[cfg(feature = "bootloader")]
 pub fn __fatal_error(_expr: &str, _msg: &str, _file: &str, _line: u32, _func: &str) -> ! {
-    screen_fatal_error(Some("BL.rs"), "BL.rs");
+    screen_fatal_error("BL.rs", "BL.rs", "PLEASE VISIT\nTREZOR.IO/RSOD");
     shutdown()
 }
 
 #[cfg(not(feature = "bootloader"))]
-pub fn __fatal_error(_expr: &str, msg: &str, file: &str, line: u32, _func: &str) -> ! {
-    let mut buf: String<256> = String::new();
-    let _ = buf.push_str(file); // Nothing we can do if this fails
-    let _ = buf.push_str(": ");
-
-    let mut line_buf = [0u8; 10];
-    if let Some(text) = u32_to_str(line, &mut line_buf) {
-        let _ = buf.push_str(text);
-    }
-
-    screen_fatal_error(Some(msg), buf.as_str());
+pub fn __fatal_error(_expr: &str, msg: &str, _file: &str, _line: u32, _func: &str) -> ! {
+    screen_fatal_error("INTERNAL_ERROR", msg, "PLEASE VISIT\nTREZOR.IO/RSOD");
     shutdown()
 }
 

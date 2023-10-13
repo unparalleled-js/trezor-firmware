@@ -216,6 +216,7 @@ Device management commands - setup, recover seed, wipe, etc.
     self-test             Perform a factory self-test.
     set-busy              Show a "Do not disconnect" dialog.
     setup                 Perform device setup and generate new seed.
+    tutorial              Show on-device tutorial.
     wipe                  Reset device to factory defaults and remove all private data.
 
 EOS commands.
@@ -251,8 +252,26 @@ Ethereum commands.
 
     Ethereum commands.
 
+    Most Ethereum commands now require the host to specify definition of a network and possibly an
+    ERC-20 token. These definitions can be automatically fetched using the `-a` option.
+
+    You can also specify a custom definition source using the `-d` option. Allowable values are:
+
+    - HTTP or HTTPS URL
+    - path to local directory
+    - path to local tar archive
+    
+
+    For debugging purposes, it is possible to force use a specific network and token definition by
+    using the `--network` and `--token` options. These options accept either a path to a file with a
+    binary blob, or a hex-encoded string.
+
   Options:
-    --help  Show this message and exit.
+    -d, --definitions TEXT  Source for Ethereum definition blobs.
+    -a, --auto-definitions  Automatically download required definitions from trezor.io
+    --network TEXT          Network definition blob.
+    --token TEXT            Token definition blob.
+    --help                  Show this message and exit.
 
   Commands:
     get-address           Get Ethereum address in hex encoding.

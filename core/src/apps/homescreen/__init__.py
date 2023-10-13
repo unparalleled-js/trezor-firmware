@@ -2,9 +2,11 @@ import storage
 import storage.cache
 import storage.device
 from trezor import config, wire
+from trezor.enums import MessageType
 from trezor.ui.layouts.homescreen import Busyscreen, Homescreen, Lockscreen
 
 from apps.base import busy_expiry_ms, lock_device
+from apps.common.authorization import is_set_any_session
 
 
 async def busyscreen() -> None:
@@ -15,22 +17,24 @@ async def homescreen() -> None:
     if storage.device.is_initialized():
         label = storage.device.get_label()
     else:
-        label = "Go to trezor.io/start"
+        label = None
 
     notification = None
     notification_is_error = False
-    if storage.device.is_initialized() and storage.device.no_backup():
+    if is_set_any_session(MessageType.AuthorizeCoinJoin):
+        notification = "COINJOIN AUTHORIZED"
+    elif storage.device.is_initialized() and storage.device.no_backup():
         notification = "SEEDLESS"
         notification_is_error = True
     elif storage.device.is_initialized() and storage.device.unfinished_backup():
-        notification = "BACKUP FAILED!"
+        notification = "BACKUP FAILED"
         notification_is_error = True
     elif storage.device.is_initialized() and storage.device.needs_backup():
-        notification = "NEEDS BACKUP!"
+        notification = "BACKUP NEEDED"
     elif storage.device.is_initialized() and not config.has_pin():
-        notification = "PIN NOT SET!"
+        notification = "PIN NOT SET"
     elif storage.device.get_experimental_features():
-        notification = "EXPERIMENTAL MODE!"
+        notification = "EXPERIMENTAL MODE"
 
     await Homescreen(
         label=label,
@@ -42,8 +46,8 @@ async def homescreen() -> None:
 
 
 async def lockscreen() -> None:
-    from apps.common.request_pin import can_lock_device
     from apps.base import unlock_device
+    from apps.common.request_pin import can_lock_device
 
     # Only show the lockscreen UI if the device can in fact be locked.
     if can_lock_device():

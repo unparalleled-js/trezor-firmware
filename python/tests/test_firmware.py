@@ -6,9 +6,9 @@ import requests
 
 from trezorlib import firmware
 from trezorlib.firmware import (
-    VendorFirmware,
     LegacyFirmware,
     LegacyV2Firmware,
+    VendorFirmware,
     VendorHeader,
 )
 
@@ -29,6 +29,7 @@ VENDOR_HEADER = (
     / "core"
     / "embed"
     / "vendorheader"
+    / "T2T1"
     / "vendorheader_satoshilabs_signed_prod.bin"
 )
 

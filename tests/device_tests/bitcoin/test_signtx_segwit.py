@@ -45,7 +45,8 @@ TXHASH_e5040e = bytes.fromhex(
 )
 
 
-def test_send_p2sh(client: Client):
+@pytest.mark.parametrize("chunkify", (True, False))
+def test_send_p2sh(client: Client, chunkify: bool):
     inp1 = messages.TxInputType(
         address_n=parse_path("m/49h/1h/0h/1/0"),
         # 2N1LGaGg836mqSQqiuUBLfcyGBhyZbremDX
@@ -65,18 +66,17 @@ def test_send_p2sh(client: Client):
         amount=123_456_789 - 11_000 - 12_300_000,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 request_output(1),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(TXHASH_20912f),
                 request_input(0, TXHASH_20912f),
@@ -90,7 +90,12 @@ def test_send_p2sh(client: Client):
             ]
         )
         _, serialized_tx = btc.sign_tx(
-            client, "Testnet", [inp1], [out1, out2], prev_txes=TX_API_TESTNET
+            client,
+            "Testnet",
+            [inp1],
+            [out1, out2],
+            prev_txes=TX_API_TESTNET,
+            chunkify=chunkify,
         )
 
     # Transaction does not exist on the blockchain, not using assert_tx_matches()
@@ -120,16 +125,15 @@ def test_send_p2sh_change(client: Client):
         amount=123_456_789 - 11_000 - 12_300_000,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 request_output(1),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(TXHASH_20912f),
                 request_input(0, TXHASH_20912f),
@@ -177,15 +181,14 @@ def test_testnet_segwit_big_amount(client: Client):
         script_type=messages.OutputScriptType.PAYTOADDRESS,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(prev_hash),
                 request_input(0, prev_hash),
@@ -236,14 +239,13 @@ def test_send_multisig_1(client: Client):
         script_type=messages.OutputScriptType.PAYTOADDRESS,
     )
 
-    tt = client.features.model == "T"
+    is_core = client.features.model in ("T", "Safe 3")
     expected_responses = [
         request_input(0),
         request_output(0),
         messages.ButtonRequest(code=B.ConfirmOutput),
-        (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+        (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
         messages.ButtonRequest(code=B.SignTx),
-        (tt, messages.ButtonRequest(code=B.SignTx)),
         request_input(0),
         request_meta(TXHASH_338e2d),
         request_input(0, TXHASH_338e2d),
@@ -305,19 +307,18 @@ def test_attack_change_input_address(client: Client):
 
     # Test if the transaction can be signed normally.
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 # The user is required to confirm transfer to another account.
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 request_output(1),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(TXHASH_20912f),
                 request_input(0, TXHASH_20912f),
@@ -386,16 +387,19 @@ def test_attack_mixed_inputs(client: Client):
         script_type=messages.OutputScriptType.PAYTOADDRESS,
     )
 
-    tt = client.features.model == "T"
+    is_core = client.features.model in ("T", "Safe 3")
     expected_responses = [
         request_input(0),
         request_input(1),
         request_output(0),
         messages.ButtonRequest(code=messages.ButtonRequestType.ConfirmOutput),
-        (tt, messages.ButtonRequest(code=messages.ButtonRequestType.ConfirmOutput)),
+        (
+            is_core,
+            messages.ButtonRequest(code=messages.ButtonRequestType.ConfirmOutput),
+        ),
+        (is_core, messages.ButtonRequest(code=messages.ButtonRequestType.SignTx)),
         messages.ButtonRequest(code=messages.ButtonRequestType.FeeOverThreshold),
         messages.ButtonRequest(code=messages.ButtonRequestType.SignTx),
-        (tt, messages.ButtonRequest(code=messages.ButtonRequestType.SignTx)),
         request_input(0),
         request_meta(TXHASH_e5040e),
         request_input(0, TXHASH_e5040e),

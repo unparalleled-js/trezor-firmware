@@ -80,7 +80,8 @@ def current_date(project):
     today = datetime.datetime.now()
 
     if (
-        parts[-3:] == ("core", "embed", "bootloader")
+        parts[-3:] == ("core", "embed", "boardloader")
+        or parts[-3:] == ("core", "embed", "bootloader")
         or parts[-3:] == ("core", "embed", "bootloader_ci")
         or parts[-2:] == ("legacy", "bootloader")
         or parts[-2:] == ("legacy", "intermediate_fw")
@@ -90,7 +91,7 @@ def current_date(project):
         return today.strftime("%Y-%m-%d")
     else:
         daysuffix = {1: "st", 2: "nd", 3: "rd"}.get(today.day % 10, "th")
-        return today.strftime(f"%d{daysuffix} %B %Y")
+        return today.strftime(f"%-d{daysuffix} %B %Y")
 
 
 @click.command()

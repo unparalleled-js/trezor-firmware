@@ -14,27 +14,34 @@
 # You should have received a copy of the License along with this library.
 # If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
 
+from typing import Any
 
 import pytest
 
 from trezorlib import btc, messages
-from trezorlib.debuglink import (
-    LayoutContent,
-    TrezorClientDebugLink as Client,
-    message_filters,
-    multipage_content,
-)
+from trezorlib.debuglink import TrezorClientDebugLink as Client
+from trezorlib.debuglink import message_filters
 from trezorlib.tools import parse_path
+
+from ...input_flows import InputFlowSignMessagePagination
 
 S = messages.InputScriptType
 
 
-def case(id, *args, altcoin=False, skip_t1=False):
+def case(
+    id: str,
+    *args: Any,
+    altcoin: bool = False,
+    skip_t1: bool = False,
+    skip_tr: bool = False
+):
     marks = []
     if altcoin:
         marks.append(pytest.mark.altcoin)
     if skip_t1:
         marks.append(pytest.mark.skip_t1)
+    if skip_tr:
+        marks.append(pytest.mark.skip_tr)
     return pytest.param(*args, id=id, marks=marks)
 
 
@@ -254,6 +261,7 @@ VECTORS = (  # case name, coin_name, path, script_type, address, message, signat
         "This is an example of a signed message.",
         "206b1f8ba47ef9eaf87aa900e41ab1e97f67e8c09292faa4acf825228d074c4b774484046dcb1d9bbf0603045dbfb328c3e1b0c09c5ae133e89e604a67a1fc6cca",
         altcoin=True,
+        skip_tr=True,
     ),
     case(
         "decred-empty",
@@ -265,6 +273,7 @@ VECTORS = (  # case name, coin_name, path, script_type, address, message, signat
         "",
         "1fd2d57490b44a0361c7809768cad032d41ba1d4b7a297f935fc65ae05f71de7ea0c6c6fd265cc5154f1fa4acd7006b6a00ddd67fb7333c1594aff9120b3ba8024",
         altcoin=True,
+        skip_tr=True,
     ),
 )
 
@@ -273,7 +282,14 @@ VECTORS = (  # case name, coin_name, path, script_type, address, message, signat
     "coin_name, path, script_type, no_script_type, address, message, signature", VECTORS
 )
 def test_signmessage(
-    client, coin_name, path, script_type, no_script_type, address, message, signature
+    client: Client,
+    coin_name: str,
+    path: str,
+    script_type: messages.InputScriptType,
+    no_script_type: bool,
+    address: str,
+    message: str,
+    signature: str,
 ):
     sig = btc.sign_message(
         client,
@@ -301,34 +317,9 @@ MESSAGE_LENGTHS = (
 @pytest.mark.skip_t1
 @pytest.mark.parametrize("message", MESSAGE_LENGTHS)
 def test_signmessage_pagination(client: Client, message: str):
-    message_read = ""
-
-    def input_flow():
-        # collect screen contents into `message_read`.
-        # Using a helper debuglink function to assemble the final text.
-        nonlocal message_read
-        layouts: list[LayoutContent] = []
-
-        # confirm address
-        br = yield
-        client.debug.wait_layout()
-        client.debug.press_yes()
-
-        br = yield
-        for i in range(br.pages):
-            layout = client.debug.wait_layout()
-            layouts.append(layout)
-
-            if i < br.pages - 1:
-                client.debug.swipe_up()
-
-        message_read = multipage_content(layouts)
-
-        client.debug.press_yes()
-
     with client:
-        client.set_input_flow(input_flow)
-        client.debug.watch_layout(True)
+        IF = InputFlowSignMessagePagination(client)
+        client.set_input_flow(IF.get())
         btc.sign_message(
             client,
             coin_name="Bitcoin",
@@ -337,14 +328,17 @@ def test_signmessage_pagination(client: Client, message: str):
         )
 
     # We cannot differentiate between a newline and space in the message read from Trezor.
-    expected_message = (
-        ("Confirm message: " + message).replace("\n", "").replace(" ", "")
-    )
-    message_read = message_read.replace(" ", "").replace("...", "")
-    assert expected_message == message_read
+    # TODO: do the check also for model R
+    if client.features.model == "T":
+        expected_message = (
+            ("Confirm message: " + message).replace("\n", "").replace(" ", "")
+        )
+        message_read = IF.message_read.replace(" ", "").replace("...", "")
+        assert expected_message == message_read
 
 
 @pytest.mark.skip_t1
+@pytest.mark.skip_tr(reason="Different screen size")
 def test_signmessage_pagination_trailing_newline(client: Client):
     message = "THIS\nMUST NOT\nBE\nPAGINATED\n"
     # The trailing newline must not cause a new paginated screen to appear.

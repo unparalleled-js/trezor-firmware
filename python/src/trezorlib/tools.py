@@ -36,13 +36,14 @@ from typing import (
 import construct
 
 if TYPE_CHECKING:
-    from .client import TrezorClient
-    from .protobuf import MessageType
-
     # Needed to enforce a return value from decorators
     # More details: https://www.python.org/dev/peps/pep-0612/
     from typing import TypeVar
-    from typing_extensions import ParamSpec, Concatenate
+
+    from typing_extensions import Concatenate, ParamSpec
+
+    from .client import TrezorClient
+    from .protobuf import MessageType
 
     MT = TypeVar("MT", bound=MessageType)
     P = ParamSpec("P")
@@ -58,6 +59,23 @@ def H_(x: int) -> int:
     Shortcut function that "hardens" a number in a BIP44 path.
     """
     return x | HARDENED_FLAG
+
+
+def is_hardened(x: int) -> bool:
+    """
+    Determines if a number in a BIP44 path is hardened.
+    """
+    return x & HARDENED_FLAG != 0
+
+
+def unharden(x: int) -> int:
+    """
+    Unhardens a number in a BIP44 path.
+    """
+    if not is_hardened(x):
+        raise ValueError("Unhardened path component")
+
+    return x ^ HARDENED_FLAG
 
 
 def btc_hash(data: bytes) -> bytes:

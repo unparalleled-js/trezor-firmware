@@ -1,6 +1,6 @@
 use crate::ui::{
     component::{Component, Event, EventCtx},
-    geometry::{Alignment, Alignment2D, Grid, GridCellSpan, Insets, Offset, Rect, TOP_RIGHT},
+    geometry::{Alignment, Alignment2D, Axis, Grid, GridCellSpan, Insets, Offset, Rect},
 };
 
 pub struct GridPlaced<T> {
@@ -71,10 +71,9 @@ where
     T: Component,
     T: crate::trace::Trace,
 {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("GridPlaced");
-        d.field("inner", &self.inner);
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("GridPlaced");
+        t.child("inner", &self.inner);
     }
 }
 
@@ -115,10 +114,9 @@ where
     T: Component,
     T: crate::trace::Trace,
 {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("FixedHeightBar");
-        d.field("inner", &self.inner);
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("FixedHeightBar");
+        t.child("inner", &self.inner);
     }
 }
 
@@ -142,7 +140,7 @@ impl<T> Floating<T> {
     pub const fn top_right(side: i16, border: i16, inner: T) -> Self {
         let size = Offset::uniform(side);
         let border = Offset::uniform(border);
-        Self::new(size, border, TOP_RIGHT, inner)
+        Self::new(size, border, Alignment2D::TOP_RIGHT, inner)
     }
 }
 
@@ -188,32 +186,49 @@ where
     T: Component,
     T: crate::trace::Trace,
 {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("Floating");
-        d.field("inner", &self.inner);
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Floating");
+        t.child("inner", &self.inner);
     }
 }
 
-pub struct VSplit<T, U> {
+pub struct Split<T, U> {
     first: T,
     second: U,
-    width: i16,
+    axis: Axis,
+    size: i16,
     spacing: i16,
 }
 
-impl<T, U> VSplit<T, U> {
-    pub const fn new(width: i16, spacing: i16, first: T, second: U) -> Self {
+impl<T, U> Split<T, U> {
+    pub const fn new(axis: Axis, size: i16, spacing: i16, first: T, second: U) -> Self {
         Self {
             first,
             second,
-            width,
+            axis,
+            size,
             spacing,
         }
     }
+
+    pub const fn left(size: i16, spacing: i16, first: T, second: U) -> Self {
+        Self::new(Axis::Vertical, size, spacing, first, second)
+    }
+
+    pub const fn right(size: i16, spacing: i16, first: T, second: U) -> Self {
+        Self::new(Axis::Vertical, -size, spacing, first, second)
+    }
+
+    pub const fn top(size: i16, spacing: i16, first: T, second: U) -> Self {
+        Self::new(Axis::Horizontal, size, spacing, first, second)
+    }
+
+    pub const fn bottom(size: i16, spacing: i16, first: T, second: U) -> Self {
+        Self::new(Axis::Horizontal, -size, spacing, first, second)
+    }
 }
 
-impl<M, T, U> Component for VSplit<T, U>
+impl<M, T, U> Component for Split<T, U>
 where
     T: Component<Msg = M>,
     U: Component<Msg = M>,
@@ -221,10 +236,26 @@ where
     type Msg = M;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        let (left, right) = bounds.split_left(self.width);
-        let right = right.inset(Insets::left(self.spacing));
-        self.first.place(left);
-        self.second.place(right);
+        let size = if self.size == 0 {
+            (bounds.size().axis(self.axis.cross()) - self.spacing) / 2
+        } else {
+            self.size
+        };
+        let (first, second) = match self.axis {
+            Axis::Vertical if size > 0 => bounds.split_left(size),
+            Axis::Vertical => bounds.split_right(-size),
+            Axis::Horizontal if size > 0 => bounds.split_top(size),
+            Axis::Horizontal => bounds.split_bottom(-size),
+        };
+        let (first, second) = match self.axis {
+            Axis::Vertical if size > 0 => (first, second.inset(Insets::left(self.spacing))),
+            Axis::Vertical => (first.inset(Insets::right(self.spacing)), second),
+            Axis::Horizontal if size > 0 => (first, second.inset(Insets::top(self.spacing))),
+            Axis::Horizontal => (first.inset(Insets::bottom(self.spacing)), second),
+        };
+
+        self.first.place(first);
+        self.second.place(second);
         bounds
     }
 
@@ -241,15 +272,14 @@ where
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T, U> crate::trace::Trace for VSplit<T, U>
+impl<T, U> crate::trace::Trace for Split<T, U>
 where
-    T: Component + crate::trace::Trace,
-    U: Component + crate::trace::Trace,
+    T: crate::trace::Trace,
+    U: crate::trace::Trace,
 {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("VSplit");
-        d.field("first", &self.first);
-        d.field("second", &self.second);
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Split");
+        t.child("first", &self.first);
+        t.child("second", &self.second);
     }
 }

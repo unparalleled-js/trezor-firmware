@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "py/builtin.h"
 #include "py/compile.h"
 #include "py/gc.h"
 #include "py/mperrno.h"
@@ -42,10 +43,18 @@
 #include "display.h"
 #include "flash.h"
 #include "image.h"
+#include "memzero.h"
+#include "model.h"
 #include "mpu.h"
 #include "random_delays.h"
+
+#include TREZOR_BOARD
+
 #ifdef USE_RGB_LED
 #include "rgb_led.h"
+#endif
+#ifdef USE_CONSUMPTION_MASK
+#include "consumption_mask.h"
 #endif
 #ifdef USE_DMA2D
 #include "dma2d.h"
@@ -53,18 +62,27 @@
 #ifdef USE_BUTTON
 #include "button.h"
 #endif
+#ifdef USE_I2C
+#include "i2c.h"
+#endif
 #ifdef USE_TOUCH
-#include "touch/touch.h"
+#include "touch.h"
 #endif
 #ifdef USE_SD_CARD
 #include "sdcard.h"
 #endif
+#ifdef USE_OPTIGA
+#include "optiga_commands.h"
+#include "optiga_transport.h"
+#include "secret.h"
+#endif
+#include "unit_variant.h"
 
 #ifdef SYSTEM_VIEW
 #include "systemview.h"
 #endif
+#include "platform.h"
 #include "rng.h"
-#include "stm32.h"
 #include "supervise.h"
 #ifdef USE_SECP256K1_ZKP
 #include "zkp_context.h"
@@ -96,7 +114,15 @@ int main(void) {
 #if !defined TREZOR_MODEL_1
   parse_boardloader_capabilities();
 
-#if PRODUCTION
+  unit_variant_init();
+
+#ifdef USE_OPTIGA
+  uint8_t secret[SECRET_OPTIGA_KEY_LEN] = {0};
+  secbool secret_ok =
+      secret_read(secret, SECRET_OPTIGA_KEY_OFFSET, SECRET_OPTIGA_KEY_LEN);
+#endif
+
+#if PRODUCTION || BOOTLOADER_QA
   check_and_replace_bootloader();
 #endif
   // Enable MPU
@@ -127,6 +153,14 @@ int main(void) {
   rgb_led_init();
 #endif
 
+#ifdef USE_CONSUMPTION_MASK
+  consumption_mask_init();
+#endif
+
+#ifdef USE_I2C
+  i2c_init();
+#endif
+
 #ifdef USE_TOUCH
   touch_init();
 #endif
@@ -135,13 +169,17 @@ int main(void) {
   sdcard_init();
 #endif
 
-  display_clear();
+#ifdef USE_OPTIGA
+  optiga_init();
+  optiga_open_application();
+  if (sectrue == secret_ok) {
+    optiga_sec_chan_handshake(secret, sizeof(secret));
+  }
+  memzero(secret, sizeof(secret));
+#endif
 
 #if !defined TREZOR_MODEL_1
-  // jump to unprivileged mode
-  // http://infocenter.arm.com/help/topic/com.arm.doc.dui0552a/CHDBIBGJ.html
-  __asm__ volatile("msr control, %0" ::"r"(0x1));
-  __asm__ volatile("isb");
+  drop_privileges();
 #endif
 
 #ifdef USE_SECP256K1_ZKP
@@ -168,9 +206,7 @@ int main(void) {
   mp_init();
   mp_obj_list_init(mp_sys_argv, 0);
   mp_obj_list_init(mp_sys_path, 0);
-  mp_obj_list_append(
-      mp_sys_path,
-      MP_OBJ_NEW_QSTR(MP_QSTR_));  // current dir (or base dir of the script)
+  mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR__dot_frozen));
 
   // Execute the main script
   printf("CORE: Executing main script\n");
@@ -186,7 +222,7 @@ int main(void) {
 // MicroPython default exception handler
 
 void __attribute__((noreturn)) nlr_jump_fail(void *val) {
-  error_shutdown("INTERNAL ERROR!", "(UE)");
+  error_shutdown("INTERNAL ERROR", "(UE)");
 }
 
 // interrupt handlers
@@ -194,29 +230,35 @@ void __attribute__((noreturn)) nlr_jump_fail(void *val) {
 void NMI_Handler(void) {
   // Clock Security System triggered NMI
   if ((RCC->CIR & RCC_CIR_CSSF) != 0) {
-    error_shutdown("INTERNAL ERROR!", "(CS)");
+    error_shutdown("INTERNAL ERROR", "(CS)");
   }
 }
 
-void HardFault_Handler(void) { error_shutdown("INTERNAL ERROR!", "(HF)"); }
+void HardFault_Handler(void) { error_shutdown("INTERNAL ERROR", "(HF)"); }
 
-void MemManage_Handler_MM(void) { error_shutdown("INTERNAL ERROR!", "(MM)"); }
+void MemManage_Handler_MM(void) { error_shutdown("INTERNAL ERROR", "(MM)"); }
 
-void MemManage_Handler_SO(void) { error_shutdown("INTERNAL ERROR!", "(SO)"); }
+void MemManage_Handler_SO(void) { error_shutdown("INTERNAL ERROR", "(SO)"); }
 
-void BusFault_Handler(void) { error_shutdown("INTERNAL ERROR!", "(BF)"); }
+void BusFault_Handler(void) { error_shutdown("INTERNAL ERROR", "(BF)"); }
 
-void UsageFault_Handler(void) { error_shutdown("INTERNAL ERROR!", "(UF)"); }
+void UsageFault_Handler(void) { error_shutdown("INTERNAL ERROR", "(UF)"); }
 
 __attribute__((noreturn)) void reboot_to_bootloader() {
+  mpu_config_bootloader();
   jump_to_with_flag(BOOTLOADER_START + IMAGE_HEADER_SIZE,
                     STAY_IN_BOOTLOADER_FLAG);
   for (;;)
     ;
 }
 
+void copy_image_header_for_bootloader(const uint8_t *image_header) {
+  memcpy(&firmware_header_start, image_header, IMAGE_HEADER_SIZE);
+}
+
 void SVC_C_Handler(uint32_t *stack) {
   uint8_t svc_number = ((uint8_t *)stack[6])[-2];
+  bool clear_firmware_header = true;
   switch (svc_number) {
     case SVC_ENABLE_IRQ:
       HAL_NVIC_EnableIRQ(stack[0]);
@@ -237,9 +279,19 @@ void SVC_C_Handler(uint32_t *stack) {
       for (;;)
         ;
       break;
+    case SVC_REBOOT_COPY_IMAGE_HEADER:
+      copy_image_header_for_bootloader((uint8_t *)stack[0]);
+      clear_firmware_header = false;
+      // break is omitted here because we want to continue to reboot below
     case SVC_REBOOT_TO_BOOTLOADER:
+      // if not going from copy image header & reboot, clean preventively this
+      // part of CCMRAM
+      if (clear_firmware_header) {
+        explicit_bzero(&firmware_header_start, IMAGE_HEADER_SIZE);
+      }
+
       ensure_compatible_settings();
-      mpu_config_bootloader();
+
       __asm__ volatile("msr control, %0" ::"r"(0x0));
       __asm__ volatile("isb");
       // See stack layout in
@@ -248,6 +300,9 @@ void SVC_C_Handler(uint32_t *stack) {
       // raising privileges.
       stack[6] = (uintptr_t)reboot_to_bootloader;
       return;
+    case SVC_GET_SYSTICK_VAL: {
+      systick_val_copy = SysTick->VAL;
+    } break;
     default:
       stack[0] = 0xffffffff;
       break;

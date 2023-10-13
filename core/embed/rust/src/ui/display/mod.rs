@@ -1,3 +1,5 @@
+pub mod color;
+pub mod font;
 pub mod loader;
 #[cfg(feature = "jpeg")]
 pub mod tjpgd;
@@ -9,42 +11,58 @@ use super::{
 };
 #[cfg(feature = "dma2d")]
 use crate::trezorhal::{
-    buffers::{get_buffer_16bpp, get_buffer_4bpp},
     dma2d::{
         dma2d_setup_4bpp_over_16bpp, dma2d_setup_4bpp_over_4bpp, dma2d_start_blend,
         dma2d_wait_for_transfer,
     },
     uzlib::UZLIB_WINDOW_SIZE,
 };
-#[cfg(not(feature = "dma2d"))]
-use crate::ui::geometry::TOP_LEFT;
-
-use crate::{
-    time::Duration,
-    trezorhal::{buffers::get_text_buffer, display, time, uzlib::UzlibContext},
-    ui::lerp::Lerp,
-};
-use core::slice;
-
 #[cfg(feature = "dma2d")]
 use crate::ui::component::image::Image;
+
+#[cfg(not(feature = "dma2d"))]
+use crate::ui::geometry::Alignment2D;
+
+#[cfg(feature = "backlight")]
+use crate::{time::Duration, trezorhal::time};
+
+use crate::{
+    trezorhal::{buffers, display, uzlib::UzlibContext},
+    ui::lerp::Lerp,
+};
+
+// Reexports
+use crate::trezorhal::buffers::BufferText;
 pub use crate::ui::display::toif::Icon;
-#[cfg(any(feature = "model_tt", feature = "model_tr"))]
-pub use loader::{loader, loader_indeterminate, LOADER_MAX, LOADER_MIN};
+pub use color::Color;
+pub use font::{Font, Glyph, GlyphMetrics};
+pub use loader::{
+    loader, loader_indeterminate, loader_small_indeterminate, LOADER_MAX, LOADER_MIN,
+};
+
+#[cfg(all(feature = "dma2d", feature = "framebuffer"))]
+use crate::trezorhal::{
+    display::{get_fb_addr, pixel},
+    dma2d::{dma2d_setup_const, dma2d_start_const_multiline},
+};
+use crate::ui::constant::WIDTH;
 
 pub fn backlight() -> u16 {
     display::backlight(-1) as u16
 }
 
+#[cfg(feature = "backlight")]
 pub fn set_backlight(val: u16) {
     display::backlight(val as i32);
 }
 
+#[cfg(feature = "backlight")]
 pub fn fade_backlight(target: u16) {
     const FADE_DURATION_MS: u32 = 50;
     fade_backlight_duration(target, FADE_DURATION_MS);
 }
 
+#[cfg(feature = "backlight")]
 pub fn fade_backlight_duration(target: u16, duration_ms: u32) {
     let target = target as i32;
     let duration_ms = duration_ms as i32;
@@ -59,55 +77,281 @@ pub fn fade_backlight_duration(target: u16, duration_ms: u32) {
     set_backlight(target as u16);
 }
 
+#[cfg(not(feature = "backlight"))]
+pub fn set_backlight(_: u16) {}
+
+#[cfg(not(feature = "backlight"))]
+pub fn fade_backlight(_: u16) {}
+
+#[cfg(not(feature = "backlight"))]
+pub fn fade_backlight_duration(_: u16, _: u32) {}
+
+#[cfg(not(feature = "framebuffer"))]
+/// Fill a whole rectangle with a specific color.
 pub fn rect_fill(r: Rect, fg_color: Color) {
-    display::bar(r.x0, r.y0, r.width(), r.height(), fg_color.into());
+    let r = r.translate(get_offset());
+    let r = r.clamp(constant::screen());
+
+    set_window(r);
+
+    for _ in r.y0..r.y1 {
+        for _ in r.x0..r.x1 {
+            pixeldata(fg_color.into());
+        }
+    }
+
+    pixeldata_dirty();
+}
+
+#[cfg(feature = "framebuffer")]
+pub fn rect_fill(r: Rect, fg_color: Color) {
+    let r = r.translate(get_offset());
+    let r = r.clamp(constant::screen());
+    set_window(r);
+    dma2d_setup_const();
+    unsafe {
+        dma2d_start_const_multiline(fg_color.into(), r.width(), r.height());
+    }
+    dma2d_wait_for_transfer();
+    pixeldata_dirty();
 }
 
 pub fn rect_stroke(r: Rect, fg_color: Color) {
-    display::bar(r.x0, r.y0, r.width(), 1, fg_color.into());
-    display::bar(r.x0, r.y0 + r.height() - 1, r.width(), 1, fg_color.into());
-    display::bar(r.x0, r.y0, 1, r.height(), fg_color.into());
-    display::bar(r.x0 + r.width() - 1, r.y0, 1, r.height(), fg_color.into());
-}
-
-pub fn rect_fill_rounded(r: Rect, fg_color: Color, bg_color: Color, radius: u8) {
-    assert!([2, 4, 8, 16].iter().any(|allowed| radius == *allowed));
-    display::bar_radius(
-        r.x0,
-        r.y0,
-        r.width(),
-        r.height(),
-        fg_color.into(),
-        bg_color.into(),
-        radius,
+    rect_fill(
+        Rect::from_top_left_and_size(Point::new(r.x0, r.y0), Offset::new(r.width(), 1)),
+        fg_color,
+    );
+    rect_fill(
+        Rect::from_top_left_and_size(
+            Point::new(r.x0, r.y0 + r.height() - 1),
+            Offset::new(r.width(), 1),
+        ),
+        fg_color,
+    );
+    rect_fill(
+        Rect::from_top_left_and_size(Point::new(r.x0, r.y0), Offset::new(1, r.height())),
+        fg_color,
+    );
+    rect_fill(
+        Rect::from_top_left_and_size(
+            Point::new(r.x0 + r.width() - 1, r.y0),
+            Offset::new(1, r.height()),
+        ),
+        fg_color,
     );
 }
 
-// Used on T1 only.
-pub fn rect_fill_rounded1(r: Rect, fg_color: Color, bg_color: Color) {
-    display::bar(r.x0, r.y0, r.width(), r.height(), fg_color.into());
-    let corners = [
-        r.top_left(),
-        r.top_right() - Offset::x(1),
-        r.bottom_right() - Offset::uniform(1),
-        r.bottom_left() - Offset::y(1),
-    ];
-    for p in corners.iter() {
-        display::bar(p.x, p.y, 1, 1, bg_color.into());
+const CORNER_RADIUS: usize = 16;
+
+#[rustfmt::skip]
+const CORNER_TABLE: [usize; CORNER_RADIUS * CORNER_RADIUS] = [
+     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  5,  9, 12, 14, 15,
+     0,  0,  0,  0,  0,  0,  0,  0,  3,  9, 15, 15, 15, 15, 15, 15,
+     0,  0,  0,  0,  0,  0,  0,  8, 15, 15, 15, 15, 15, 15, 15, 15,
+     0,  0,  0,  0,  0,  3, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     0,  0,  0,  0,  3, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     0,  0,  0,  3, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     0,  0,  0, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     0,  0,  8, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     0,  3, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     0,  9, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     1, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     5, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+     9, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+];
+
+/// Draw a rectangle with rounded corners.
+#[cfg(not(feature = "framebuffer"))]
+pub fn rect_fill_rounded(r: Rect, fg_color: Color, bg_color: Color, radius: u8) {
+    if radius == 1 {
+        rect_fill_rounded1(r, fg_color, bg_color);
+    } else {
+        assert!([2, 4, 8, 16].iter().any(|allowed| radius == *allowed));
+
+        let color_table = get_color_table(fg_color, bg_color);
+        let area = r.translate(get_offset());
+        let clamped = area.clamp(constant::screen());
+
+        set_window(clamped);
+
+        let radius = radius as i16;
+        let radius_inv = 16 / radius;
+
+        for y in area.y0..area.y1 {
+            for x in area.x0..area.x1 {
+                if x - r.x0 < radius && y - r.y0 < radius {
+                    let c = CORNER_TABLE[((x - area.x0) * radius_inv
+                        + (y - area.y0) * radius_inv * CORNER_RADIUS as i16)
+                        as usize];
+                    pixeldata(color_table[c]);
+                } else if x - r.x0 < radius && y - r.y0 >= r.height() - radius {
+                    let c = CORNER_TABLE[((x - area.x0) * radius_inv
+                        + (r.height() - 1 - (y - area.y0)) * radius_inv * CORNER_RADIUS as i16)
+                        as usize];
+                    pixeldata(color_table[c]);
+                } else if x - r.x0 >= r.width() - radius && y - r.y0 < radius {
+                    let c = CORNER_TABLE[((r.width() - 1 - (x - area.x0)) * radius_inv
+                        + (y - area.y0) * radius_inv * CORNER_RADIUS as i16)
+                        as usize];
+                    pixeldata(color_table[c]);
+                } else if x - r.x0 >= r.width() - radius && y - r.y0 >= r.height() - radius {
+                    let c = CORNER_TABLE[((r.width() - 1 - (x - area.x0)) * radius_inv
+                        + (r.height() - 1 - (y - area.y0)) * radius_inv * CORNER_RADIUS as i16)
+                        as usize];
+                    pixeldata(color_table[c]);
+                } else {
+                    pixeldata(color_table[15]);
+                }
+            }
+        }
+    }
+    pixeldata_dirty();
+}
+
+pub fn rect_fill_rounded_buffer(r: Rect, radius: u8, buffer: &mut BufferText) {
+    if r.height() > r.y0 + buffers::TEXT_BUFFER_HEIGHT as i16 || r.x0 + r.width() > WIDTH {
+        return;
+    }
+
+    assert!([2, 4, 8, 16].iter().any(|allowed| radius == *allowed));
+
+    let radius = radius as i16;
+    let radius_inv = 16 / radius;
+
+    for y in r.y0..r.y1 {
+        for x in r.x0..r.x1 {
+            let c = if x - r.x0 < radius && y - r.y0 < radius {
+                CORNER_TABLE[((x - r.x0) * radius_inv
+                    + (y - r.y0) * radius_inv * CORNER_RADIUS as i16)
+                    as usize]
+            } else if x - r.x0 < radius && y - r.y0 >= r.height() - radius {
+                CORNER_TABLE[((x - r.x0) * radius_inv
+                    + (r.height() - 1 - (y - r.y0)) * radius_inv * CORNER_RADIUS as i16)
+                    as usize]
+            } else if x - r.x0 >= r.width() - radius && y - r.y0 < radius {
+                CORNER_TABLE[((r.width() - 1 - (x - r.x0)) * radius_inv
+                    + (y - r.y0) * radius_inv * CORNER_RADIUS as i16)
+                    as usize]
+            } else if x - r.x0 >= r.width() - radius && y - r.y0 >= r.height() - radius {
+                CORNER_TABLE[((r.width() - 1 - (x - r.x0)) * radius_inv
+                    + (r.height() - 1 - (y - r.y0)) * radius_inv * CORNER_RADIUS as i16)
+                    as usize]
+            } else {
+                15usize
+            };
+            let p = y * WIDTH + x;
+            let b = (p / 2) as usize;
+            if p % 2 != 0 {
+                buffer.buffer[b] |= (c << 4) as u8;
+            } else {
+                buffer.buffer[b] |= c as u8;
+            }
+        }
+    }
+    pixeldata_dirty();
+}
+
+#[cfg(feature = "framebuffer")]
+/// Draw a rectangle with rounded corners.
+pub fn rect_fill_rounded(area: Rect, fg_color: Color, bg_color: Color, radius: u8) {
+    let radius = radius as i16;
+    if radius == 1 {
+        rect_fill_rounded1(area, fg_color, bg_color);
+    } else {
+        assert!([2, 4, 8, 16].iter().any(|allowed| radius == *allowed));
+
+        let r = area.translate(get_offset());
+        let r = r.clamp(constant::screen());
+        let fb = get_fb_addr();
+
+        rect_fill(r, fg_color);
+        let r_inv = 16 / radius;
+        let color_table = get_color_table(fg_color, bg_color);
+
+        for y in 0..radius {
+            for x in 0..radius {
+                let c = CORNER_TABLE[(x * r_inv + y * r_inv * 16) as usize];
+                pixel(fb, r.x0 + x, r.y0 + y, color_table[c].into());
+            }
+        }
+        for y in 0..radius {
+            for x in 0..radius {
+                let c = CORNER_TABLE[((radius - x - 1) * r_inv + y * r_inv * 16) as usize];
+                pixel(fb, r.x1 - radius + x, r.y0 + y, color_table[c].into());
+            }
+        }
+        for y in 0..radius {
+            for x in 0..radius {
+                let c = CORNER_TABLE[(x * r_inv + (radius - y - 1) * r_inv * 16) as usize];
+                pixel(fb, r.x0 + x, r.y1 - radius + y, color_table[c].into());
+            }
+        }
+        for y in 0..radius {
+            for x in 0..radius {
+                let c = CORNER_TABLE
+                    [((radius - x - 1) * r_inv + (radius - y - 1) * r_inv * 16) as usize];
+                pixel(
+                    fb,
+                    r.x1 - radius + x,
+                    r.y1 - radius + y,
+                    color_table[c].into(),
+                );
+            }
+        }
+    }
+    pixeldata_dirty();
+}
+
+/// Filling a rectangle with a rounding of 1 pixel - removing the corners.
+fn rect_fill_rounded1(r: Rect, fg_color: Color, bg_color: Color) {
+    rect_fill(r, fg_color);
+    rect_fill_corners(r, bg_color);
+}
+
+/// Creating a rectangular outline with a given radius/rounding.
+pub fn rect_outline_rounded(r: Rect, fg_color: Color, bg_color: Color, radius: u8) {
+    // Painting a bigger rectangle with FG and inner smaller with BG
+    // to create the outline.
+    let inner_r = r.shrink(1);
+    if radius == 1 {
+        rect_fill_rounded(r, fg_color, bg_color, 1);
+        rect_fill(inner_r, bg_color);
+        rect_fill_corners(inner_r, fg_color);
+    } else if radius == 2 {
+        rect_fill_rounded(r, fg_color, bg_color, 2);
+        rect_fill_rounded(inner_r, bg_color, fg_color, 1);
+    } else if radius == 4 {
+        rect_fill_rounded(r, fg_color, bg_color, 4);
+        rect_fill_rounded(inner_r, bg_color, fg_color, 2);
+        rect_fill_corners(inner_r, bg_color);
+    }
+}
+
+/// Filling all four corners of a rectangle with a given color.
+pub fn rect_fill_corners(r: Rect, fg_color: Color) {
+    for p in r.corner_points().iter() {
+        // This draws a 1x1 rectangle at the given point.
+        rect_fill(
+            Rect::from_top_left_and_size(*p, Offset::uniform(1)),
+            fg_color,
+        );
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct TextOverlay<'a> {
+pub struct TextOverlay<T> {
     area: Rect,
-    text: &'a str,
+    text: T,
     font: Font,
     max_height: i16,
     baseline: i16,
 }
 
-impl<'a> TextOverlay<'a> {
-    pub fn new(text: &'a str, font: Font) -> Self {
+impl<T: AsRef<str>> TextOverlay<T> {
+    pub fn new(text: T, font: Font) -> Self {
         let area = Rect::zero();
 
         Self {
@@ -115,12 +359,21 @@ impl<'a> TextOverlay<'a> {
             text,
             font,
             max_height: font.max_height(),
-            baseline: font.baseline(),
+            baseline: font.text_baseline(),
         }
     }
 
+    pub fn set_text(&mut self, text: T) {
+        self.text = text;
+    }
+
+    pub fn get_text(&self) -> &T {
+        &self.text
+    }
+
+    // baseline relative to the underlying render area
     pub fn place(&mut self, baseline: Point) {
-        let text_width = self.font.text_width(self.text);
+        let text_width = self.font.text_width(self.text.as_ref());
         let text_height = self.font.text_height();
 
         let text_area_start = baseline + Offset::new(-(text_width / 2), -text_height);
@@ -139,7 +392,12 @@ impl<'a> TextOverlay<'a> {
 
         let p_rel = Point::new(p.x - self.area.x0, p.y - self.area.y0);
 
-        for g in self.text.bytes().filter_map(|c| self.font.get_glyph(c)) {
+        for g in self
+            .text
+            .as_ref()
+            .bytes()
+            .filter_map(|c| self.font.get_glyph(c))
+        {
             let top = self.max_height - self.baseline - g.bearing_y;
             let char_area = Rect::new(
                 Point::new(tot_adv + g.bearing_x, top),
@@ -359,9 +617,8 @@ pub(crate) fn position_buffer(
     } else {
         0
     };
-    dest_buffer[((start * buffer_bpp) / 8)..((start + width) * buffer_bpp) / 8].copy_from_slice(
-        &src_buffer[((x_sh * buffer_bpp) / 8) as usize..((x_sh as usize + width) * buffer_bpp) / 8],
-    );
+    dest_buffer[((start * buffer_bpp) / 8)..((start + width) * buffer_bpp) / 8]
+        .copy_from_slice(&src_buffer[((x_sh * buffer_bpp) / 8)..((x_sh + width) * buffer_bpp) / 8]);
 }
 
 /// Performs decompression of one line of pixels,
@@ -449,13 +706,13 @@ pub fn text_over_image(
     offset_text: Offset,
     text_color: Color,
 ) {
-    let text_buffer = unsafe { get_text_buffer(0, true) };
-    let img1 = unsafe { get_buffer_16bpp(0, true) };
-    let img2 = unsafe { get_buffer_16bpp(1, true) };
-    let empty_img = unsafe { get_buffer_16bpp(2, true) };
-    let t1 = unsafe { get_buffer_4bpp(0, true) };
-    let t2 = unsafe { get_buffer_4bpp(1, true) };
-    let empty_t = unsafe { get_buffer_4bpp(2, true) };
+    let mut text_buffer = buffers::BufferText::get();
+    let mut img1 = buffers::BufferLine16bpp::get_cleared();
+    let mut img2 = buffers::BufferLine16bpp::get_cleared();
+    let mut empty_img = buffers::BufferLine16bpp::get_cleared();
+    let mut t1 = buffers::BufferLine4bpp::get_cleared();
+    let mut t2 = buffers::BufferLine4bpp::get_cleared();
+    let mut empty_t = buffers::BufferLine4bpp::get_cleared();
 
     let r_img;
     let area;
@@ -496,7 +753,7 @@ pub fn text_over_image(
         Point::new(text_right, text_bottom),
     );
 
-    display::text_into_buffer(text, font.into(), text_buffer, 0);
+    display::text_into_buffer(text, font.into(), &mut text_buffer, 0);
 
     set_window(clamped);
 
@@ -549,7 +806,7 @@ pub fn text_over_image(
         }
 
         dma2d_wait_for_transfer();
-        dma2d_start_blend(&t_buffer.buffer, &img_buffer.buffer, clamped.width());
+        unsafe { dma2d_start_blend(&t_buffer.buffer, &img_buffer.buffer, clamped.width()) };
     }
 
     dma2d_wait_for_transfer();
@@ -573,12 +830,12 @@ pub fn icon_over_icon(
     fg: (Icon, Offset, Color),
     bg_color: Color,
 ) {
-    let bg1 = unsafe { get_buffer_16bpp(0, true) };
-    let bg2 = unsafe { get_buffer_16bpp(1, true) };
-    let empty1 = unsafe { get_buffer_16bpp(2, true) };
-    let fg1 = unsafe { get_buffer_4bpp(0, true) };
-    let fg2 = unsafe { get_buffer_4bpp(1, true) };
-    let empty2 = unsafe { get_buffer_4bpp(2, true) };
+    let mut bg1 = buffers::BufferLine16bpp::get_cleared();
+    let mut bg2 = buffers::BufferLine16bpp::get_cleared();
+    let mut empty1 = buffers::BufferLine16bpp::get_cleared();
+    let mut fg1 = buffers::BufferLine4bpp::get_cleared();
+    let mut fg2 = buffers::BufferLine4bpp::get_cleared();
+    let mut empty2 = buffers::BufferLine4bpp::get_cleared();
 
     let (icon_bg, offset_bg, color_icon_bg) = bg;
     let (icon_fg, offset_fg, color_icon_fg) = fg;
@@ -634,8 +891,6 @@ pub fn icon_over_icon(
             bg_buffer_used = &mut *bg2;
         }
 
-        const BUFFER_BPP: usize = 4;
-
         let using_fg = process_buffer(
             y,
             r_fg,
@@ -663,7 +918,7 @@ pub fn icon_over_icon(
         }
 
         dma2d_wait_for_transfer();
-        dma2d_start_blend(&fg_buffer.buffer, &bg_buffer.buffer, clamped.width());
+        unsafe { dma2d_start_blend(&fg_buffer.buffer, &bg_buffer.buffer, clamped.width()) };
     }
 
     dma2d_wait_for_transfer();
@@ -686,8 +941,13 @@ pub fn icon_over_icon(
         Point::from(offset_bg)
     };
 
-    icon_bg.draw(pos_bg, TOP_LEFT, color_icon_bg, bg_color);
-    icon_fg.draw(pos_bg + offset_fg, TOP_LEFT, color_icon_fg, color_icon_bg);
+    icon_bg.draw(pos_bg, Alignment2D::TOP_LEFT, color_icon_bg, bg_color);
+    icon_fg.draw(
+        pos_bg + offset_fg,
+        Alignment2D::TOP_LEFT,
+        color_icon_fg,
+        color_icon_bg,
+    );
 }
 
 /// Gets a color of a pixel on `p` coordinates of rounded rectangle with corner
@@ -730,9 +990,9 @@ fn rect_rounded2_get_pixel(
 /// Optionally draws a text inside the rectangle and adjusts its color to match
 /// the fill. The coordinates of the text are specified in the TextOverlay
 /// struct.
-pub fn bar_with_text_and_fill(
+pub fn bar_with_text_and_fill<T: AsRef<str>>(
     area: Rect,
-    overlay: Option<TextOverlay>,
+    overlay: Option<&TextOverlay<T>>,
     fg_color: Color,
     bg_color: Color,
     fill_from: i16,
@@ -769,13 +1029,13 @@ pub fn bar_with_text_and_fill(
 }
 
 pub fn marquee(area: Rect, text: &str, offset: i16, font: Font, fg: Color, bg: Color) {
-    let buffer = unsafe { get_text_buffer(0, true) };
+    let mut buffer = buffers::BufferText::get_cleared();
 
     let area = area.translate(get_offset());
     let clamped = area.clamp(constant::screen());
     set_window(clamped);
 
-    display::text_into_buffer(text, font.into(), buffer, offset);
+    display::text_into_buffer(text, font.into(), &mut buffer, offset);
     let tbl = get_color_table(fg, bg);
 
     for y in 0..clamped.height() {
@@ -798,14 +1058,17 @@ pub fn marquee(area: Rect, text: &str, offset: i16, font: Font, fg: Color, bg: C
     pixeldata_dirty();
 }
 
-// Used on T1 only.
-pub fn dotted_line(start: Point, width: i16, color: Color) {
-    for x in (start.x..width).step_by(2) {
-        display::bar(x, start.y, 1, 1, color.into());
+pub fn dotted_line(start: Point, width: i16, color: Color, step: i16) {
+    for x in (start.x..width).step_by(step as usize) {
+        rect_fill(
+            Rect::from_top_left_and_size(Point::new(x, start.y), Offset::new(1, 1)),
+            color,
+        );
     }
 }
 
-pub fn text(baseline: Point, text: &str, font: Font, fg_color: Color, bg_color: Color) {
+/// Display text left-aligned to a certain Point
+pub fn text_left(baseline: Point, text: &str, font: Font, fg_color: Color, bg_color: Color) {
     display::text(
         baseline.x,
         baseline.y,
@@ -816,6 +1079,7 @@ pub fn text(baseline: Point, text: &str, font: Font, fg_color: Color, bg_color: 
     );
 }
 
+/// Display text centered around a certain Point
 pub fn text_center(baseline: Point, text: &str, font: Font, fg_color: Color, bg_color: Color) {
     let w = font.text_width(text);
     display::text(
@@ -828,6 +1092,7 @@ pub fn text_center(baseline: Point, text: &str, font: Font, fg_color: Color, bg_
     );
 }
 
+/// Display text right-aligned to a certain Point
 pub fn text_right(baseline: Point, text: &str, font: Font, fg_color: Color, bg_color: Color) {
     let w = font.text_width(text);
     display::text(
@@ -841,7 +1106,6 @@ pub fn text_right(baseline: Point, text: &str, font: Font, fg_color: Color, bg_c
 }
 
 pub fn text_top_left(position: Point, text: &str, font: Font, fg_color: Color, bg_color: Color) {
-    // let w = font.text_width(text);
     let h = font.text_height();
     display::text(
         position.x,
@@ -892,291 +1156,4 @@ pub fn get_color_table(fg_color: Color, bg_color: Color) -> [Color; 16] {
     }
 
     table
-}
-
-pub struct Glyph {
-    pub width: i16,
-    pub height: i16,
-    pub adv: i16,
-    pub bearing_x: i16,
-    pub bearing_y: i16,
-    data: &'static [u8],
-}
-
-impl Glyph {
-    /// Construct a `Glyph` from a raw pointer.
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because the caller has to guarantee that `data`
-    /// is pointing to a memory containing a valid glyph data, that is:
-    /// - contains valid glyph metadata
-    /// - data has appropriate size
-    /// - data must have static lifetime
-    pub unsafe fn load(data: *const u8) -> Self {
-        unsafe {
-            let width = *data.offset(0) as i16;
-            let height = *data.offset(1) as i16;
-
-            let data_bits = constant::FONT_BPP * width * height;
-
-            let data_bytes = if data_bits % 8 == 0 {
-                data_bits / 8
-            } else {
-                (data_bits / 8) + 1
-            };
-
-            Glyph {
-                width,
-                height,
-                adv: *data.offset(2) as i16,
-                bearing_x: *data.offset(3) as i16,
-                bearing_y: *data.offset(4) as i16,
-                data: slice::from_raw_parts(data.offset(5), data_bytes as usize),
-            }
-        }
-    }
-
-    pub fn print(&self, pos: Point, colortable: [Color; 16]) -> i16 {
-        let bearing = Offset::new(self.bearing_x, -self.bearing_y);
-        let size = Offset::new(self.width, self.height);
-        let pos_adj = pos + bearing;
-        let r = Rect::from_top_left_and_size(pos_adj, size);
-
-        let area = r.translate(get_offset());
-        let window = area.clamp(constant::screen());
-
-        set_window(window);
-
-        for y in window.y0..window.y1 {
-            for x in window.x0..window.x1 {
-                let p = Point::new(x, y);
-                let r = p - pos_adj;
-                let c = self.get_pixel_data(r);
-                pixeldata(colortable[c as usize]);
-            }
-        }
-        self.adv
-    }
-
-    pub fn unpack_bpp1(&self, a: i16) -> u8 {
-        let c_data = self.data[(a / 8) as usize];
-        ((c_data >> (7 - (a % 8))) & 0x01) * 15
-    }
-
-    pub fn unpack_bpp2(&self, a: i16) -> u8 {
-        let c_data = self.data[(a / 4) as usize];
-        ((c_data >> (6 - (a % 4) * 2)) & 0x03) * 5
-    }
-
-    pub fn unpack_bpp4(&self, a: i16) -> u8 {
-        let c_data = self.data[(a / 2) as usize];
-        (c_data >> (4 - (a % 2) * 4)) & 0x0F
-    }
-
-    pub fn unpack_bpp8(&self, a: i16) -> u8 {
-        let c_data = self.data[a as usize];
-        c_data >> 4
-    }
-
-    pub fn get_pixel_data(&self, p: Offset) -> u8 {
-        let a = p.x + p.y * self.width;
-
-        match constant::FONT_BPP {
-            1 => self.unpack_bpp1(a),
-            2 => self.unpack_bpp2(a),
-            4 => self.unpack_bpp4(a),
-            8 => self.unpack_bpp8(a),
-            _ => 0,
-        }
-    }
-}
-
-/// Font constants. Keep in sync with FONT_ definitions in
-/// `extmod/modtrezorui/fonts/fonts.h`.
-#[derive(Copy, Clone, PartialEq, Eq, FromPrimitive)]
-#[repr(u8)]
-pub enum Font {
-    NORMAL = 1,
-    BOLD = 2,
-    MONO = 3,
-    DEMIBOLD = 5,
-}
-
-impl From<Font> for i32 {
-    fn from(font: Font) -> i32 {
-        -(font as i32)
-    }
-}
-
-impl Font {
-    pub fn text_width(self, text: &str) -> i16 {
-        display::text_width(text, self.into())
-    }
-
-    pub fn char_width(self, ch: char) -> i16 {
-        display::char_width(ch, self.into())
-    }
-
-    pub fn text_height(self) -> i16 {
-        display::text_height(self.into())
-    }
-
-    pub fn text_max_height(self) -> i16 {
-        display::text_max_height(self.into())
-    }
-
-    pub fn text_baseline(self) -> i16 {
-        display::text_baseline(self.into())
-    }
-
-    pub fn max_height(self) -> i16 {
-        display::text_max_height(self.into()) as i16
-    }
-
-    pub fn baseline(self) -> i16 {
-        display::text_baseline(self.into()) as i16
-    }
-
-    pub fn line_height(self) -> i16 {
-        constant::LINE_SPACE + self.text_height()
-    }
-
-    pub fn get_glyph(self, char_byte: u8) -> Option<Glyph> {
-        let gl_data = display::get_char_glyph(char_byte, self.into());
-
-        if gl_data.is_null() {
-            return None;
-        }
-        unsafe { Some(Glyph::load(gl_data)) }
-    }
-
-    pub fn display_text(self, text: &str, baseline: Point, fg_color: Color, bg_color: Color) {
-        let colortable = get_color_table(fg_color, bg_color);
-        let mut adv_total = 0;
-        for c in text.bytes() {
-            let g = self.get_glyph(c);
-            if let Some(gly) = g {
-                let adv = gly.print(baseline + Offset::new(adv_total, 0), colortable);
-                adv_total += adv;
-            }
-        }
-    }
-
-    /// Get the length of the longest suffix from a given `text`
-    /// that will fit into the area `width` pixels wide.
-    pub fn longest_suffix(self, width: i16, text: &str) -> usize {
-        let mut text_width = 0;
-        for (chars_from_right, c) in text.chars().rev().enumerate() {
-            let c_width = self.char_width(c);
-            if text_width + c_width > width {
-                // Another character cannot be fitted, we're done.
-                return chars_from_right;
-            }
-            text_width += c_width;
-        }
-
-        text.len() // it fits in its entirety
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct Color(u16);
-
-#[macro_export]
-macro_rules! alpha {
-    ($n: expr) => {
-        if ($n >= 1.0) {
-            256_u16
-        } else {
-            ($n * 256.0) as u16
-        }
-    };
-}
-
-impl Color {
-    pub const fn from_u16(val: u16) -> Self {
-        Self(val)
-    }
-
-    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
-        let r = (r as u16 & 0xF8) << 8;
-        let g = (g as u16 & 0xFC) << 3;
-        let b = (b as u16 & 0xF8) >> 3;
-        Self(r | g | b)
-    }
-
-    pub const fn luminance(self) -> u32 {
-        (self.r() as u32 * 299) / 1000
-            + (self.g() as u32 * 587) / 1000
-            + (self.b() as u32 * 114) / 1000
-    }
-
-    pub const fn rgba(bg: Color, r: u8, g: u8, b: u8, alpha: u16) -> Self {
-        let r_u16 = r as u16;
-        let g_u16 = g as u16;
-        let b_u16 = b as u16;
-
-        let r = ((256 - alpha) * bg.r() as u16 + alpha * r_u16) >> 8;
-        let g = ((256 - alpha) * bg.g() as u16 + alpha * g_u16) >> 8;
-        let b = ((256 - alpha) * bg.b() as u16 + alpha * b_u16) >> 8;
-
-        let r = (r & 0xF8) << 8;
-        let g = (g & 0xFC) << 3;
-        let b = (b & 0xF8) >> 3;
-        Self(r | g | b)
-    }
-
-    pub const fn alpha(bg: Color, alpha: u16) -> Self {
-        Self::rgba(bg, 0xFF, 0xFF, 0xFF, alpha)
-    }
-
-    pub const fn r(self) -> u8 {
-        (self.0 >> 8) as u8 & 0xF8
-    }
-
-    pub const fn g(self) -> u8 {
-        (self.0 >> 3) as u8 & 0xFC
-    }
-
-    pub const fn b(self) -> u8 {
-        (self.0 << 3) as u8 & 0xF8
-    }
-
-    pub fn to_u16(self) -> u16 {
-        self.0
-    }
-
-    pub fn hi_byte(self) -> u8 {
-        (self.to_u16() >> 8) as u8
-    }
-
-    pub fn lo_byte(self) -> u8 {
-        (self.to_u16() & 0xFF) as u8
-    }
-
-    pub fn negate(self) -> Self {
-        Self(!self.0)
-    }
-}
-
-impl Lerp for Color {
-    fn lerp(a: Self, b: Self, t: f32) -> Self {
-        let r = u8::lerp(a.r(), b.r(), t);
-        let g = u8::lerp(a.g(), b.g(), t);
-        let b = u8::lerp(a.b(), b.b(), t);
-        Color::rgb(r, g, b)
-    }
-}
-
-impl From<u16> for Color {
-    fn from(val: u16) -> Self {
-        Self(val)
-    }
-}
-
-impl From<Color> for u16 {
-    fn from(val: Color) -> Self {
-        val.to_u16()
-    }
 }

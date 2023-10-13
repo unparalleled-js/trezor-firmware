@@ -1,12 +1,14 @@
 mod address_details;
 mod button;
+mod coinjoin_progress;
 mod dialog;
 mod fido;
 #[rustfmt::skip]
 mod fido_icons;
+mod error;
 mod frame;
 mod hold_to_confirm;
-#[cfg(feature = "dma2d")]
+#[cfg(feature = "micropython")]
 mod homescreen;
 mod horizontal_page;
 mod keyboard;
@@ -22,13 +24,15 @@ mod welcome_screen;
 pub use address_details::AddressDetails;
 pub use button::{
     Button, ButtonContent, ButtonMsg, ButtonStyle, ButtonStyleSheet, CancelConfirmMsg,
-    CancelInfoConfirmMsg, FloatingButton, FloatingButtonMsg, IconText, SelectWordMsg,
+    CancelInfoConfirmMsg, IconText, SelectWordMsg,
 };
+pub use coinjoin_progress::CoinJoinProgress;
 pub use dialog::{Dialog, DialogMsg, IconDialog};
+pub use error::ErrorScreen;
 pub use fido::{FidoConfirm, FidoMsg};
-pub use frame::{Frame, NotificationFrame};
+pub use frame::{Frame, FrameMsg};
 pub use hold_to_confirm::{HoldToConfirm, HoldToConfirmMsg};
-#[cfg(feature = "dma2d")]
+#[cfg(feature = "micropython")]
 pub use homescreen::{Homescreen, HomescreenMsg, Lockscreen};
 pub use horizontal_page::HorizontalPage;
 pub use keyboard::{
@@ -43,7 +47,7 @@ pub use loader::{Loader, LoaderMsg, LoaderStyle, LoaderStyleSheet};
 pub use number_input::{NumberInputDialog, NumberInputDialogMsg};
 pub use page::{SwipeHoldPage, SwipePage};
 pub use progress::Progress;
-pub use result::ResultScreen;
+pub use result::{ResultFooter, ResultScreen, ResultStyle};
 pub use scroll::ScrollBar;
 pub use swipe::{Swipe, SwipeDirection};
 pub use welcome_screen::WelcomeScreen;

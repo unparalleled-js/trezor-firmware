@@ -7,10 +7,11 @@
 #include "dma2d.h"
 #include "flash.h"
 #include "fonts/fonts.h"
+#include "model.h"
 #include "rgb_led.h"
 #include "secbool.h"
 #include "storage.h"
-#include "touch/touch.h"
+#include "touch.h"
 #include "usb.h"
 
 #include "bip39.h"

@@ -1,29 +1,19 @@
-from typing import TYPE_CHECKING
-
 from trezor.enums import ButtonRequestType
 from trezor.strings import format_amount
-from trezor.ui.layouts import confirm_metadata
+from trezor.ui.layouts import confirm_metadata, confirm_total
 
 from .helpers import DECIMALS
 
-if TYPE_CHECKING:
-    from trezor.wire import Context
 
-
-async def require_confirm_fee(ctx: Context, fee: int) -> None:
-    await confirm_metadata(
-        ctx,
-        "confirm_fee",
-        "Confirm fee",
-        "Transaction fee:\n{}",
+async def require_confirm_total(total: int, fee: int) -> None:
+    await confirm_total(
+        format_amount(total, DECIMALS) + " XRP",
         format_amount(fee, DECIMALS) + " XRP",
-        ButtonRequestType.ConfirmOutput,
     )
 
 
-async def require_confirm_destination_tag(ctx: Context, tag: int) -> None:
+async def require_confirm_destination_tag(tag: int) -> None:
     await confirm_metadata(
-        ctx,
         "confirm_destination_tag",
         "Confirm tag",
         "Destination tag:\n{}",
@@ -32,7 +22,7 @@ async def require_confirm_destination_tag(ctx: Context, tag: int) -> None:
     )
 
 
-async def require_confirm_tx(ctx: Context, to: str, value: int) -> None:
+async def require_confirm_tx(to: str, value: int, chunkify: bool = False) -> None:
     from trezor.ui.layouts import confirm_output
 
-    await confirm_output(ctx, to, format_amount(value, DECIMALS) + " XRP", hold=True)
+    await confirm_output(to, format_amount(value, DECIMALS) + " XRP", chunkify=chunkify)

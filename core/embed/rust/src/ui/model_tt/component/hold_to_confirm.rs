@@ -2,7 +2,6 @@ use crate::{
     time::Instant,
     ui::{
         component::{Child, Component, ComponentExt, Event, EventCtx, FixedHeightBar, Pad},
-        display::toif::Icon,
         geometry::{Grid, Insets, Rect},
         util::animation_disabled,
     },
@@ -91,6 +90,7 @@ where
         self.buttons.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.pad.area);
         if self.loader.is_animating() {
@@ -107,10 +107,9 @@ impl<T> crate::trace::Trace for HoldToConfirm<T>
 where
     T: crate::trace::Trace,
 {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("HoldToConfirm");
-        self.content.trace(d);
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("HoldToConfirm");
+        t.child("content", &self.content);
     }
 }
 
@@ -127,9 +126,18 @@ pub enum CancelHoldMsg {
 impl CancelHold {
     pub fn new(button_style: ButtonStyleSheet) -> FixedHeightBar<Self> {
         theme::button_bar(Self {
-            cancel: Some(Button::with_icon(Icon::new(theme::ICON_CANCEL)).into_child()),
+            cancel: Some(Button::with_icon(theme::ICON_CANCEL).into_child()),
             hold: Button::with_text("HOLD TO CONFIRM")
                 .styled(button_style)
+                .into_child(),
+        })
+    }
+
+    pub fn with_cancel_arrow() -> FixedHeightBar<Self> {
+        theme::button_bar(Self {
+            cancel: Some(Button::with_icon(theme::ICON_UP).into_child()),
+            hold: Button::with_text("HOLD TO CONFIRM")
+                .styled(theme::button_confirm())
                 .into_child(),
         })
     }
@@ -171,6 +179,7 @@ impl Component for CancelHold {
         self.hold.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.cancel.bounds(sink);
         self.hold.bounds(sink);
@@ -179,8 +188,8 @@ impl Component for CancelHold {
 
 #[cfg(feature = "ui_debug")]
 impl crate::trace::Trace for CancelHold {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.string("CancelHold")
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("CancelHold");
     }
 }
 

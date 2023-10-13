@@ -64,9 +64,23 @@ def cli(project, version):
     major, minor, patch = m.group(1, 2, 3)
 
     parts = project.parts
-    if parts[-1] == "core":
+    if (project / "version.h").is_file():
+        bump_header(
+            project / "version.h",
+            VERSION_MAJOR=major,
+            VERSION_MINOR=minor,
+            VERSION_PATCH=patch,
+        )
+    elif parts[-1] == "core":
         bump_header(
             project / "embed" / "firmware" / "version.h",
+            VERSION_MAJOR=major,
+            VERSION_MINOR=minor,
+            VERSION_PATCH=patch,
+        )
+    elif parts[-1] == "legacy":
+        bump_header(
+            project / "firmware" / "version.h",
             VERSION_MAJOR=major,
             VERSION_MINOR=minor,
             VERSION_PATCH=patch,
@@ -74,23 +88,6 @@ def cli(project, version):
     elif parts[-1] == "python":
         bump_python(
             project / "src" / "trezorlib" / "__init__.py", f"{major}.{minor}.{patch}"
-        )
-    elif parts[-2:] == ("legacy", "firmware"):
-        bump_header(
-            project / "version.h",
-            VERSION_MAJOR=major,
-            VERSION_MINOR=minor,
-            VERSION_PATCH=patch,
-        )
-    elif parts[-2:] == ("legacy", "bootloader"):
-        bump_header(
-            project / "version.h",
-            VERSION_MAJOR=major,
-            VERSION_MINOR=minor,
-            VERSION_PATCH=patch,
-            VERSION_MAJOR_CHAR=hex_lit(major),
-            VERSION_MINOR_CHAR=hex_lit(minor),
-            VERSION_PATCH_CHAR=hex_lit(patch),
         )
     else:
         raise click.ClickException(f"Unknown project {project}.")

@@ -27,8 +27,9 @@
 
 #include <unistd.h>
 
+#include TREZOR_BOARD
 #include "button.h"
-#include "touch/touch.h"
+#include "touch.h"
 #include "usb.h"
 
 // Whether USB data pins were connected on last check (USB configured)
@@ -47,9 +48,11 @@ bool usb_connected_previously = true;
 #include "modtrezorio-webusb.h"
 #include "modtrezorio-usb.h"
 // clang-format on
-#if defined TREZOR_MODEL_T
-#include "modtrezorio-fatfs.h"
+#ifdef USE_SBU
 #include "modtrezorio-sbu.h"
+#endif
+#ifdef USE_SD_CARD
+#include "modtrezorio-fatfs.h"
 #include "modtrezorio-sdcard.h"
 #endif
 
@@ -77,16 +80,22 @@ bool usb_connected_previously = true;
 STATIC const mp_rom_map_elem_t mp_module_trezorio_globals_table[] = {
     {MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_trezorio)},
 
-#if defined TREZOR_MODEL_T
-    {MP_ROM_QSTR(MP_QSTR_fatfs), MP_ROM_PTR(&mod_trezorio_fatfs_module)},
+#ifdef USE_SBU
     {MP_ROM_QSTR(MP_QSTR_SBU), MP_ROM_PTR(&mod_trezorio_SBU_type)},
-    {MP_ROM_QSTR(MP_QSTR_sdcard), MP_ROM_PTR(&mod_trezorio_sdcard_module)},
+#endif
 
+#ifdef USE_SD_CARD
+    {MP_ROM_QSTR(MP_QSTR_fatfs), MP_ROM_PTR(&mod_trezorio_fatfs_module)},
+    {MP_ROM_QSTR(MP_QSTR_sdcard), MP_ROM_PTR(&mod_trezorio_sdcard_module)},
+#endif
+
+#ifdef USE_TOUCH
     {MP_ROM_QSTR(MP_QSTR_TOUCH), MP_ROM_INT(TOUCH_IFACE)},
     {MP_ROM_QSTR(MP_QSTR_TOUCH_START), MP_ROM_INT((TOUCH_START >> 24) & 0xFFU)},
     {MP_ROM_QSTR(MP_QSTR_TOUCH_MOVE), MP_ROM_INT((TOUCH_MOVE >> 24) & 0xFFU)},
     {MP_ROM_QSTR(MP_QSTR_TOUCH_END), MP_ROM_INT((TOUCH_END >> 24) & 0xFFU)},
-#elif defined TREZOR_MODEL_1 || defined TREZOR_MODEL_R
+#endif
+#ifdef USE_BUTTON
     {MP_ROM_QSTR(MP_QSTR_BUTTON), MP_ROM_INT(BUTTON_IFACE)},
     {MP_ROM_QSTR(MP_QSTR_BUTTON_PRESSED),
      MP_ROM_INT((BTN_EVT_DOWN >> 24) & 0x3U)},
@@ -118,6 +127,6 @@ const mp_obj_module_t mp_module_trezorio = {
     .globals = (mp_obj_dict_t*)&mp_module_trezorio_globals,
 };
 
-MP_REGISTER_MODULE(MP_QSTR_trezorio, mp_module_trezorio, MICROPY_PY_TREZORIO);
+MP_REGISTER_MODULE(MP_QSTR_trezorio, mp_module_trezorio);
 
 #endif  // MICROPY_PY_TREZORIO

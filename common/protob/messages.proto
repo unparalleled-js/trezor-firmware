@@ -120,6 +120,10 @@ enum MessageType {
     reserved 90 to 92;
     MessageType_UnlockPath = 93 [(bitcoin_only) = true, (wire_in) = true];
     MessageType_UnlockedPathRequest = 94 [(bitcoin_only) = true, (wire_out) = true];
+    MessageType_ShowDeviceTutorial = 95 [(bitcoin_only) = true, (wire_in) = true];
+    MessageType_UnlockBootloader = 96 [(bitcoin_only) = true, (wire_in) = true];
+    MessageType_AuthenticateDevice = 97 [(bitcoin_only) = true, (wire_out) = true];
+    MessageType_AuthenticityProof = 98 [(bitcoin_only) = true, (wire_in) = true];
 
     MessageType_SetU2FCounter = 63 [(wire_in) = true];
     MessageType_GetNextU2FCounter = 80 [(wire_in) = true];
@@ -181,6 +185,7 @@ enum MessageType {
     MessageType_DebugLinkRecordScreen = 9003 [(bitcoin_only) = true, (wire_debug_in) = true];
     MessageType_DebugLinkEraseSdCard = 9005 [(bitcoin_only) = true, (wire_debug_in) = true];
     MessageType_DebugLinkWatchLayout = 9006 [(bitcoin_only) = true, (wire_debug_in) = true];
+    MessageType_DebugLinkResetDebugEvents = 9007 [(bitcoin_only) = true, (wire_debug_in) = true];
 
     // Ethereum
     MessageType_EthereumGetPublicKey = 450 [(wire_in) = true];

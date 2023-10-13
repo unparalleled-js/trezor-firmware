@@ -10,6 +10,17 @@ TREZOR_MODEL = ARGUMENTS.get('TREZOR_MODEL', 'T')
 DMA2D =  TREZOR_MODEL in ('T', )
 CMAKELISTS = int(ARGUMENTS.get('CMAKELISTS', 0))
 
+if TREZOR_MODEL in ('DISC1', ):
+    # skip unix build
+    env = Environment()
+    def build_unix(target,source,env):
+        print(f'Emulator: nothing to build for Model {TREZOR_MODEL}')
+    program_bin = env.Command(
+                 target='trezor-emu-core',
+                 source=None,
+                 action=build_unix)
+    Return()
+
 FEATURE_FLAGS = {
     "SECP256K1_ZKP": True,  # required for trezor.crypto.curve.bip340 (BIP340/Taproot)
 }
@@ -27,14 +38,16 @@ RASPI = os.getenv('TREZOR_EMULATOR_RASPI') == '1'
 
 if TREZOR_MODEL in ('1', 'R'):
     FONT_NORMAL='Font_PixelOperator_Regular_8'
-    FONT_DEMIBOLD='Font_PixelOperator_Regular_8'
+    FONT_DEMIBOLD='Font_Unifont_Bold_16'
     FONT_BOLD='Font_PixelOperator_Bold_8'
     FONT_MONO='Font_PixelOperatorMono_Regular_8'
-if TREZOR_MODEL in ('T', ):
-    FONT_NORMAL='Font_TTHoves_Regular_18'
-    FONT_DEMIBOLD='Font_TTHoves_DemiBold_18'
-    FONT_BOLD='Font_TTHoves_Bold_16'
-    FONT_MONO='Font_RobotoMono_Regular_20'
+    FONT_BIG='Font_Unifont_Regular_16'
+elif TREZOR_MODEL in ('T', ):
+    FONT_NORMAL='Font_TTHoves_Regular_21'
+    FONT_DEMIBOLD='Font_TTHoves_DemiBold_21'
+    FONT_BOLD='Font_TTHoves_Bold_17'
+    FONT_MONO='Font_RobotoMono_Medium_20'
+    FONT_BIG=None
 
 # modtrezorconfig
 CPPPATH_MOD += [
@@ -45,6 +58,7 @@ SOURCE_MOD += [
     'embed/extmod/modtrezorconfig/modtrezorconfig.c',
     'vendor/trezor-storage/norcow.c',
     'vendor/trezor-storage/storage.c',
+    'vendor/trezor-storage/flash_common.c',
 ]
 
 # modtrezorcrypto
@@ -55,13 +69,14 @@ CPPPATH_MOD += [
 CPPDEFINES_MOD += [
     'AES_128',
     'AES_192',
+    'USE_INSECURE_PRNG',
     ('USE_BIP32_CACHE', '0'),
     ('USE_KECCAK', '1'),
     ('USE_ETHEREUM', '1' if EVERYTHING else '0'),
     ('USE_MONERO', '1' if EVERYTHING else '0'),
     ('USE_CARDANO', '1' if EVERYTHING else '0'),
-    ('USE_NEM', '1' if EVERYTHING else '0'),
-    ('USE_EOS', '1' if EVERYTHING else '0'),
+    ('USE_NEM', '1' if (EVERYTHING and TREZOR_MODEL != "R") else '0'),
+    ('USE_EOS', '1' if (EVERYTHING and TREZOR_MODEL != "R") else '0'),
 ]
 SOURCE_MOD += [
     'embed/extmod/trezorobj.c',
@@ -115,6 +130,7 @@ SOURCE_MOD += [
     'vendor/trezor-crypto/sha3.c',
     'vendor/trezor-crypto/shamir.c',
     'vendor/trezor-crypto/slip39.c',
+    'vendor/trezor-crypto/slip39_english.c',
 ]
 if EVERYTHING:
     SOURCE_MOD += [
@@ -169,19 +185,36 @@ CPPPATH_MOD += [
         'vendor/micropython/lib/uzlib',
 ]
 SOURCE_MOD += [
-    'embed/extmod/modtrezorui/buffers.c',
-    'embed/extmod/modtrezorui/colors.c',
-    'embed/extmod/modtrezorui/display.c',
-    'embed/extmod/modtrezorui/fonts/fonts.c',
-    'embed/extmod/modtrezorui/fonts/font_bitmap.c',
+    'embed/lib/unit_variant.c',
+    'embed/lib/buffers.c',
+    'embed/lib/colors.c',
+    'embed/lib/display.c',
+    'embed/lib/fonts/fonts.c',
+    'embed/lib/fonts/font_bitmap.c',
+    'embed/lib/image.c',
     'embed/extmod/modtrezorui/modtrezorui.c',
     'vendor/micropython/lib/uzlib/adler32.c',
     'vendor/micropython/lib/uzlib/crc32.c',
     'vendor/micropython/lib/uzlib/tinflate.c',
 ]
+
+if TREZOR_MODEL in ('1', ):
+    SOURCE_MOD += [
+        'embed/models/model_T1B1_layout.c',
+    ]
+elif TREZOR_MODEL in ('T', ):
+    SOURCE_MOD += [
+        'embed/models/model_T2T1_layout.c',
+    ]
+elif TREZOR_MODEL in ('R', ):
+    SOURCE_MOD += [
+        'embed/models/model_T2B1_layout.c',
+    ]
+
+
+
 CPPDEFINES_MOD += [
     'TREZOR_UI2',
-    'USE_RUST_LOADER'
 ]
 if TREZOR_MODEL not in ('1', ):
     CPPDEFINES_MOD += [
@@ -200,8 +233,7 @@ SOURCE_MOD += [
 
 # rust mods
 SOURCE_MOD += [
-    'embed/extmod/rustmods/modtrezorproto.c',
-    'embed/extmod/rustmods/modtrezorui2.c',
+    'embed/extmod/rustmods.c',
 ]
 
 # modutime
@@ -213,11 +245,11 @@ SOURCE_MICROPYTHON = [
     'vendor/micropython/extmod/modubinascii.c',
     'vendor/micropython/extmod/moductypes.c',
     'vendor/micropython/extmod/moduheapq.c',
+    'vendor/micropython/extmod/moduos.c',
     'vendor/micropython/extmod/modutimeq.c',
     'vendor/micropython/extmod/utime_mphal.c',
     'vendor/micropython/shared/readline/readline.c',
     'vendor/micropython/shared/timeutils/timeutils.c',
-    'vendor/micropython/ports/unix/modos.c',
     'vendor/micropython/py/argcheck.c',
     'vendor/micropython/py/asmarm.c',
     'vendor/micropython/py/asmbase.c',
@@ -336,26 +368,30 @@ SOURCE_MICROPYTHON = [
 ]
 
 SOURCE_UNIX = [
-    'embed/unix/common.c',
-    'embed/unix/display-unix.c',
-    'embed/unix/flash.c',
+    'embed/trezorhal/unix/common.c',
+    'embed/trezorhal/unix/display-unix.c',
+    'embed/trezorhal/unix/flash.c',
+    'embed/trezorhal/unix/random_delays.c',
+    'embed/trezorhal/unix/rng.c',
+    'embed/trezorhal/unix/usb.c',
+    'embed/trezorhal/unix/touch/touch.c',
     'embed/unix/main.c',
     'embed/unix/main_main.c',
     'embed/unix/profile.c',
-    'embed/unix/random_delays.c',
-    'embed/unix/rng.c',
-    'embed/unix/touch/touch.c',
-    'embed/unix/usb.c',
     'vendor/micropython/shared/runtime/gchelper_generic.c',
     'vendor/micropython/ports/unix/alloc.c',
     'vendor/micropython/ports/unix/gccollect.c',
     'vendor/micropython/ports/unix/input.c',
     'vendor/micropython/ports/unix/unix_mphal.c',
 ]
-if TREZOR_MODEL in ('T',):
+if TREZOR_MODEL in ('T', 'R'):
     SOURCE_UNIX += [
-        'embed/unix/sbu.c',
-        'embed/unix/sdcard.c',
+        'embed/trezorhal/unix/sbu.c',
+    ]
+
+if TREZOR_MODEL == 'R':
+    SOURCE_UNIX += [
+        'embed/trezorhal/unix/optiga.c',
     ]
 
 if DMA2D:
@@ -363,7 +399,7 @@ if DMA2D:
         'USE_DMA2D',
     ]
     SOURCE_UNIX += [
-        'embed/unix/dma2d.c',
+        'embed/lib/dma2d_emul.c',
     ]
 
 
@@ -372,6 +408,7 @@ tools.add_font('NORMAL', FONT_NORMAL, CPPDEFINES_MOD, SOURCE_MOD)
 tools.add_font('BOLD', FONT_BOLD, CPPDEFINES_MOD, SOURCE_MOD)
 tools.add_font('DEMIBOLD', FONT_DEMIBOLD, CPPDEFINES_MOD, SOURCE_MOD)
 tools.add_font('MONO', FONT_MONO, CPPDEFINES_MOD, SOURCE_MOD)
+tools.add_font('BIG', FONT_BIG, CPPDEFINES_MOD, SOURCE_MOD)
 
 
 SOURCE_QSTR = SOURCE_MOD + SOURCE_MICROPYTHON + SOURCE_UNIX
@@ -382,6 +419,24 @@ else:
     STATIC=""
 
 env = Environment(ENV=os.environ, CFLAGS='%s -DPYOPT=%s -DBITCOIN_ONLY=%s %s' % (ARGUMENTS.get('CFLAGS', ''), PYOPT, BITCOIN_ONLY, STATIC))
+
+
+if TREZOR_MODEL in ('T',):
+    UI_LAYOUT = 'UI_LAYOUT_TT'
+    ui_layout_feature = 'model_tt'
+elif TREZOR_MODEL in ('1', 'R'):
+    UI_LAYOUT = 'UI_LAYOUT_TR'
+    ui_layout_feature = 'model_tr'
+else:
+    raise ValueError('Unknown Trezor model')
+
+if TREZOR_MODEL in ('T',):
+    SDCARD = True
+    SOURCE_UNIX += [
+        'embed/trezorhal/unix/sdcard.c',
+    ]
+else:
+    SDCARD = False
 
 env.Tool('micropython')
 
@@ -431,27 +486,43 @@ if ARGUMENTS.get('TREZOR_MEMPERF', '0') == '1':
 env.Replace(
     TREZOR_MODEL=TREZOR_MODEL, )
 
+if TREZOR_MODEL in ('T', 'R'):
+    CPU_MODEL   = 'STM32F427xx'
+elif TREZOR_MODEL in ('DISC1', ):
+    CPU_MODEL   = 'STM32F429xx'
+elif TREZOR_MODEL in ('1',):
+    CPU_MODEL   = 'STM32F405xx'
+else:
+    raise ValueError('Unknown Trezor model')
+
 env.Replace(
     CCFLAGS='$COPT '
     '-g3 '
-    '-std=gnu99 -Wall -Werror -Wuninitialized -Wno-missing-braces '
+    '-std=gnu11 -Wall -Werror -Wuninitialized -Wno-missing-braces '
     '-fdata-sections -ffunction-sections -fPIE ' + CCFLAGS_MOD,
     CCFLAGS_QSTR='-DNO_QSTR -DN_X64 -DN_X86 -DN_THUMB',
     LIBS=['m'],
     CPPPATH=[
         '.',
         'embed/rust',
+        'embed/lib',
+        'embed/models',
         'embed/unix',
+        'embed/trezorhal',
+        'embed/trezorhal/unix',
         'embed/extmod/modtrezorui',
         'vendor/micropython',
         'vendor/micropython/ports/unix',
         'vendor/micropython/lib/mp-readline',
     ] + CPPPATH_MOD,
     CPPDEFINES=[
+        CPU_MODEL,
         'TREZOR_EMULATOR',
         'TREZOR_MODEL_'+TREZOR_MODEL,
-        'TREZOR_BOARD=\\"board-unix.h\\"',
+        'TREZOR_BOARD=\\"boards/board-unix.h\\"',
+        'MCU_TYPE='+CPU_MODEL,
         ('MP_CONFIGFILE', '\\"embed/unix/mpconfigport.h\\"'),
+        UI_LAYOUT,
     ] + CPPDEFINES_MOD,
     ASPPFLAGS='$CFLAGS $CCFLAGS', )
 
@@ -502,18 +573,30 @@ qstr_generated = env.GenerateQstrDefs(
 env.Ignore(qstr_collected, qstr_generated)
 
 #
-# Micropython version and modules
+# Micropython module declarations
+#
+
+moduledefs_collected = env.CollectModules(
+    target='genhdr/moduledefs.collected.h', source=SOURCE_QSTR)
+
+
+hdr_moduledefs = env.Command(
+    target='genhdr/moduledefs.h',
+    source=moduledefs_collected,
+    action='$MAKEMODULEDEFS $SOURCE > $TARGET', )
+
+env.Ignore(moduledefs_collected, moduledefs_collected)
+env.Ignore(moduledefs_collected, qstr_generated)
+env.Ignore(moduledefs_collected, hdr_moduledefs)
+
+#
+# Micropython version
 #
 
 hdr_version = env.Command(
     target='genhdr/mpversion.h',
     source='',
     action='$MAKEVERSIONHDR $TARGET', )
-
-hdr_moduledefs = env.Command(
-    target='genhdr/moduledefs.h',
-    source=SOURCE_QSTR,
-    action='$MAKEMODULEDEFS --vpath="." $SOURCES > $TARGET', )
 
 env.Ignore(hdr_moduledefs, hdr_moduledefs)
 env.Ignore(hdr_moduledefs, qstr_collected)
@@ -528,33 +611,42 @@ if FROZEN:
     SOURCE_PY_DIR = 'src/'
 
     SOURCE_PY = Glob(SOURCE_PY_DIR + '*.py')
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/*.py'))
+    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/*.py',
+        exclude=[
+            SOURCE_PY_DIR + 'trezor/sdcard.py',
+        ] if not SDCARD else []
+    ))
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/crypto/*.py'))
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/*.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/components/*.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/components/common/*.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/__init__.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/common.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/homescreen.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/reset.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/recovery.py'))
-    if EVERYTHING:
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/fido.py'))
-    if TREZOR_MODEL in ('T',):
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tt_v2/__init__.py'))
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tt_v2/homescreen.py'))
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tt_v2/reset.py'))
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tt_v2/recovery.py'))
-        if EVERYTHING:
-            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tt_v2/fido.py'))
-    elif TREZOR_MODEL in ('1', 'R'):
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tr/__init__.py'))
+
+    # UI layouts - common files and then model-specific. Exclude FIDO when BTC-only.
+    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/*.py',
+        exclude=[
+            SOURCE_PY_DIR + 'trezor/ui/layouts/fido.py',
+        ] if not EVERYTHING else []
+    ))
+    if UI_LAYOUT == 'UI_LAYOUT_TT':
+        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tt/*.py',
+            exclude=[
+                SOURCE_PY_DIR + 'trezor/ui/layouts/tt/fido.py',
+            ] if not EVERYTHING else []
+        ))
+    elif UI_LAYOUT == 'UI_LAYOUT_TR':
+        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/ui/layouts/tr/*.py',
+            exclude=[
+                SOURCE_PY_DIR + 'trezor/ui/layouts/tr/fido.py',
+            ] if not EVERYTHING else []
+        ))
     else:
-        raise ValueError('Unknown Trezor model')
+        raise ValueError('Unknown layout')
 
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/wire/*.py'))
 
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'storage/*.py'))
+    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'storage/*.py',
+        exclude=[
+            SOURCE_PY_DIR + 'storage/sd_salt.py',
+        ] if not SDCARD else []
+    ))
 
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/messages/__init__.py'))
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/*.py',
@@ -574,14 +666,19 @@ if FROZEN:
     )
 
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/*.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/common/*.py'))
-    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/common/*/*.py'))
+    SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/common/*.py',
+        exclude=[
+            SOURCE_PY_DIR + 'apps/common/sdcard.py',
+        ] if not SDCARD else []
+    ))
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/debug/*.py'))
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/homescreen/*.py'))
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/management/*.py',
         exclude=[
             SOURCE_PY_DIR + 'apps/management/sd_protect.py',
-        ] if TREZOR_MODEL not in ('T',) else [])
+        ] if not SDCARD else [] + [
+            SOURCE_PY_DIR + 'apps/management/authenticate_device.py',
+        ] if TREZOR_MODEL not in ('R',) else [])
     )
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/management/*/*.py'))
     SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/misc/*.py'))
@@ -602,9 +699,10 @@ if FROZEN:
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/cardano/*/*.py'))
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/Cardano*.py'))
 
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/eos/*.py'))
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/eos/*/*.py'))
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/Eos*.py'))
+        if TREZOR_MODEL != "R":
+            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/eos/*.py'))
+            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/eos/*/*.py'))
+            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/Eos*.py'))
 
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/ethereum/*.py'))
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/Ethereum*.py'))
@@ -615,9 +713,10 @@ if FROZEN:
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/DebugMonero*.py'))
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/Monero*.py'))
 
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/nem/*.py'))
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/nem/*/*.py'))
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/NEM*.py'))
+        if TREZOR_MODEL != "R":
+            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/nem/*.py'))
+            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/nem/*/*.py'))
+            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/NEM*.py'))
 
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/ripple/*.py'))
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/Ripple*.py'))
@@ -633,12 +732,20 @@ if FROZEN:
 
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/webauthn/*.py'))
 
-        SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/bitcoin/sign_tx/decred.py'))
+        if TREZOR_MODEL != "R":
+            SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/bitcoin/sign_tx/decred.py'))
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/bitcoin/sign_tx/bitcoinlike.py'))
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'apps/bitcoin/sign_tx/zcash_v4.py'))
         SOURCE_PY.extend(Glob(SOURCE_PY_DIR + 'trezor/enums/Zcash*.py'))
 
-    source_mpy = env.FrozenModule(source=SOURCE_PY, source_dir=SOURCE_PY_DIR, bitcoin_only=BITCOIN_ONLY)
+    source_mpy = env.FrozenModule(
+        source=SOURCE_PY,
+        source_dir=SOURCE_PY_DIR,
+        bitcoin_only=BITCOIN_ONLY,
+        backlight=TREZOR_MODEL in ('T',),
+        optiga=TREZOR_MODEL in ('R',),
+        ui_layout=UI_LAYOUT,
+        )
 
     source_mpyc = env.FrozenCFile(
         target='frozen_mpy.c', source=source_mpy, qstr_header=qstr_preprocessed)
@@ -673,9 +780,7 @@ RUST_LIB = 'trezor_lib'
 RUST_LIBPATH = f'{RUST_LIBDIR}/lib{RUST_LIB}.a'
 
 def cargo_build():
-    # T1 does not have its own Rust feature, it shares it with TR
-    model_feature = 'model_tr' if TREZOR_MODEL == '1' else f'model_t{TREZOR_MODEL.lower()}'
-    features = ['micropython', 'protobuf', model_feature]
+    features = ['micropython', 'protobuf', ui_layout_feature]
     if BITCOIN_ONLY == '1':
         features.append('bitcoin_only')
     features.append('ui')
@@ -683,6 +788,12 @@ def cargo_build():
         features.append('debug')
     if DMA2D:
         features.append('dma2d')
+
+    if TREZOR_MODEL in ('T',):
+        features.append('touch')
+        features.append('sd_card')
+    if TREZOR_MODEL in ('R', '1'):
+        features.append('button')
 
     env.get('ENV')['TREZOR_MODEL'] = TREZOR_MODEL
 

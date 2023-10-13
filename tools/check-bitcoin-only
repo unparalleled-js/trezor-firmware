@@ -1,17 +1,31 @@
-#!/bin/sh
+#!/usr/bin/env bash
 RETURN=0
 
-EXCEPTIONS="decred|omni|ripple|dash|TEXT_MARGIN_LEFT|dash_width|dashlane|flo|mnemonic|meter|refuse|fused|enemy|cinema|syntaxerror|mix|palm|UdesRsK|kcc|derive_cardano|ntity|gather|bmc|cloudflare|rsk7|map|oho|mas|uniq|numbers|aves"
+EXCEPTIONS=()
+EXCEPTIONS+=( "decred" )  # "decred" figures in field names used by the bitcoin app
+EXCEPTIONS+=( "omni" )  # OMNI is part of the bitcoin app
+    # BIP39 or SLIP39 words that have "dash", "nem", or "flo" in them
+EXCEPTIONS+=( "cinema" "dash" "enemy" "float" "flock" "flower" "floor" "floral" )
+EXCEPTIONS+=( "mnemonic" )  # has NEM in it
+EXCEPTIONS+=( "workflow" "overflow" )  # has Flo in it
+EXCEPTIONS+=( "SyntaxError" )  # has Axe in it
+EXCEPTIONS+=( "DKDNEM" )  # has NEM in it, some sort of weird coincidence
+EXCEPTIONS+=( "confirm_ethereum_tx" )  # is model-specific, so is in layout/__init__.py instead of ethereum/layout.py
+
+GREP_ARGS=()
+for exception in "${EXCEPTIONS[@]}"; do
+    GREP_ARGS+=(-e $exception)
+done
 
 # dump all coins except the first 3 (Bitcoin, Testnet, Regtest)
-ALTCOINS=$(./common/tools/cointool.py dump -l -p -t -d trezor1 -d trezor2 | grep '"name"' | cut -d '"' -f 4 | tail -n +4)
+ALTCOINS=$(./common/tools/cointool.py dump -l -p -t -d T1B1 -d T2T1 -d T2B1 | grep '"name"' | cut -d '"' -f 4 | tail -n +4)
 # split on newlines only
 OLDIFS=$IFS
 IFS="
 "
 for altcoin in $ALTCOINS; do
     # echo :"$altcoin":
-    if strings "$1" | grep -i "$altcoin" | grep -Evi "$EXCEPTIONS" ; then
+    if strings "$1" | grep -i "$altcoin" | grep -vi ${GREP_ARGS[@]} ; then
         RETURN=1
     fi
 done

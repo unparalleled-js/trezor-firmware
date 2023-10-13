@@ -1,13 +1,15 @@
-use crate::ui::{
-    component::{
-        base::ComponentExt,
-        paginated::Paginate,
-        text::paragraphs::{Paragraph, ParagraphStrType, Paragraphs},
-        Child, Component, Event, EventCtx, Pad,
+use crate::{
+    strutil::{self, StringType},
+    ui::{
+        component::{
+            base::ComponentExt,
+            paginated::Paginate,
+            text::paragraphs::{Paragraph, Paragraphs},
+            Child, Component, Event, EventCtx, Pad,
+        },
+        display::{self, Font},
+        geometry::{Grid, Insets, Offset, Rect},
     },
-    display::{self, Font},
-    geometry::{Grid, Insets, Offset, Rect},
-    util,
 };
 
 use super::{theme, Button, ButtonMsg};
@@ -33,7 +35,7 @@ where
 impl<T, F> NumberInputDialog<T, F>
 where
     F: Fn(u32) -> T,
-    T: ParagraphStrType,
+    T: StringType,
 {
     pub fn new(min: u32, max: u32, init_value: u32, description_func: F) -> Self {
         let text = description_func(init_value);
@@ -69,7 +71,7 @@ where
 
 impl<T, F> Component for NumberInputDialog<T, F>
 where
-    T: ParagraphStrType,
+    T: StringType,
     F: Fn(u32) -> T,
 {
     type Msg = NumberInputDialogMsg;
@@ -87,13 +89,12 @@ where
             theme::CONTENT_BORDER,
         ));
 
-        let grid = Grid::new(button_area, 1, 3).with_spacing(theme::KEYBOARD_SPACING);
+        let grid = Grid::new(button_area, 1, 2).with_spacing(theme::KEYBOARD_SPACING);
         self.input.place(input_area);
         self.paragraphs.place(content_area);
         self.paragraphs_pad.place(content_area);
         self.info_button.place(grid.row_col(0, 0));
-        self.confirm_button
-            .place(grid.row_col(0, 1).union(grid.row_col(0, 2)));
+        self.confirm_button.place(grid.row_col(0, 1));
         bounds
     }
 
@@ -119,6 +120,7 @@ where
         self.confirm_button.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area);
         self.input.bounds(sink);
@@ -131,16 +133,15 @@ where
 #[cfg(feature = "ui_debug")]
 impl<T, F> crate::trace::Trace for NumberInputDialog<T, F>
 where
-    T: ParagraphStrType,
+    T: StringType,
     F: Fn(u32) -> T,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("NumberInputDialog");
-        t.field("input", &self.input);
-        t.field("paragraphs", &self.paragraphs);
-        t.field("info_button", &self.info_button);
-        t.field("confirm_button", &self.confirm_button);
-        t.close();
+        t.component("NumberInputDialog");
+        t.child("input", &self.input);
+        t.child("paragraphs", &self.paragraphs);
+        t.child("info_button", &self.info_button);
+        t.child("confirm_button", &self.confirm_button);
     }
 }
 
@@ -211,7 +212,7 @@ impl Component for NumberInput {
 
     fn paint(&mut self) {
         let mut buf = [0u8; 10];
-        if let Some(text) = util::u32_to_str(self.value, &mut buf) {
+        if let Some(text) = strutil::format_i64(self.value as i64, &mut buf) {
             let digit_font = Font::DEMIBOLD;
             let y_offset = digit_font.text_height() / 2 + Button::<&str>::BASELINE_OFFSET;
             display::rect_fill(self.area, theme::BG);
@@ -227,6 +228,7 @@ impl Component for NumberInput {
         self.inc.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.dec.bounds(sink);
         self.inc.bounds(sink);
@@ -237,8 +239,7 @@ impl Component for NumberInput {
 #[cfg(feature = "ui_debug")]
 impl crate::trace::Trace for NumberInput {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("NumberInput");
-        t.field("value", &(self.value as usize));
-        t.close();
+        t.component("NumberInput");
+        t.int("value", self.value as i64);
     }
 }

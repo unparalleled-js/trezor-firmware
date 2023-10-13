@@ -145,7 +145,7 @@ def _responses(
     change: int = 0,
     foreign: bool = False,
 ):
-    tt = client.features.model == "T"
+    is_core = client.features.model in ("T", "Safe 3")
     resp = [
         request_input(0),
         request_input(1),
@@ -154,7 +154,7 @@ def _responses(
 
     if change != 1:
         resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
-        if tt:
+        if is_core:
             resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
     elif foreign:
         resp.append(messages.ButtonRequest(code=B.UnknownDerivationPath))
@@ -163,14 +163,13 @@ def _responses(
 
     if change != 2:
         resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
-        if tt:
+        if is_core:
             resp.append(messages.ButtonRequest(code=B.ConfirmOutput))
     elif foreign:
         resp.append(messages.ButtonRequest(code=B.UnknownDerivationPath))
 
     resp += [
         messages.ButtonRequest(code=B.SignTx),
-        (tt, messages.ButtonRequest(code=B.SignTx)),
         request_input(0),
         request_meta(INP1.prev_hash),
         request_input(0, INP1.prev_hash),

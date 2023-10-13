@@ -1,16 +1,16 @@
-use crate::ui::{
-    component::{
-        image::BlendedImage,
-        text::{
-            paragraphs::{
-                Paragraph, ParagraphSource, ParagraphStrType, ParagraphVecShort, Paragraphs, VecExt,
+use crate::{
+    strutil::StringType,
+    ui::{
+        component::{
+            image::BlendedImage,
+            text::{
+                paragraphs::{Paragraph, ParagraphSource, ParagraphVecShort, Paragraphs, VecExt},
+                TextStyle,
             },
-            TextStyle,
+            Child, Component, Event, EventCtx, Never,
         },
-        Child, Component, Event, EventCtx, Never,
+        geometry::{Insets, LinearPlacement, Rect},
     },
-    display::toif::Icon,
-    geometry::{Insets, LinearPlacement, Rect},
 };
 
 use super::theme;
@@ -71,6 +71,7 @@ where
         self.controls.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.content.bounds(sink);
         self.controls.bounds(sink);
@@ -84,10 +85,9 @@ where
     U: crate::trace::Trace,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("Dialog");
-        t.field("content", &self.content);
-        t.field("controls", &self.controls);
-        t.close();
+        t.component("Dialog");
+        t.child("content", &self.content);
+        t.child("controls", &self.controls);
     }
 }
 
@@ -99,7 +99,7 @@ pub struct IconDialog<T, U> {
 
 impl<T, U> IconDialog<T, U>
 where
-    T: ParagraphStrType,
+    T: StringType,
     U: Component,
 {
     pub fn new(icon: BlendedImage, title: T, controls: U) -> Self {
@@ -119,25 +119,31 @@ where
         }
     }
 
-    pub fn with_text(mut self, style: &'static TextStyle, text: T) -> Self {
-        if !text.as_ref().is_empty() {
-            self.paragraphs
-                .inner_mut()
-                .add(Paragraph::new(style, text).centered());
+    pub fn with_paragraph(mut self, para: Paragraph<T>) -> Self {
+        if !para.content().as_ref().is_empty() {
+            self.paragraphs.inner_mut().add(para);
         }
         self
+    }
+
+    pub fn with_text(self, style: &'static TextStyle, text: T) -> Self {
+        self.with_paragraph(Paragraph::new(style, text).centered())
     }
 
     pub fn with_description(self, description: T) -> Self {
         self.with_text(&theme::TEXT_NORMAL_OFF_WHITE, description)
     }
 
+    pub fn with_value(self, value: T) -> Self {
+        self.with_text(&theme::TEXT_MONO, value)
+    }
+
     pub fn new_shares(lines: [T; 4], controls: U) -> Self {
         let [l0, l1, l2, l3] = lines;
         Self {
             image: Child::new(BlendedImage::new(
-                Icon::new(theme::IMAGE_BG_CIRCLE),
-                Icon::new(theme::IMAGE_FG_SUCCESS),
+                theme::IMAGE_BG_CIRCLE,
+                theme::IMAGE_FG_SUCCESS,
                 theme::SUCCESS_COLOR,
                 theme::FG,
                 theme::BG,
@@ -161,7 +167,7 @@ where
 
 impl<T, U> Component for IconDialog<T, U>
 where
-    T: ParagraphStrType,
+    T: StringType,
     U: Component,
 {
     type Msg = DialogMsg<Never, U::Msg>;
@@ -192,6 +198,7 @@ where
         self.controls.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.image.bounds(sink);
         self.paragraphs.bounds(sink);
@@ -202,14 +209,13 @@ where
 #[cfg(feature = "ui_debug")]
 impl<T, U> crate::trace::Trace for IconDialog<T, U>
 where
-    T: ParagraphStrType,
+    T: StringType,
     U: crate::trace::Trace,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("IconDialog");
-        t.field("content", &self.paragraphs);
-        t.field("image", &self.image);
-        t.field("controls", &self.controls);
-        t.close();
+        t.component("IconDialog");
+        t.child("image", &self.image);
+        t.child("content", &self.paragraphs);
+        t.child("controls", &self.controls);
     }
 }

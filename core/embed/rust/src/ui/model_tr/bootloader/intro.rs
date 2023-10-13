@@ -1,30 +1,25 @@
 use crate::ui::{
-    component::{
-        text::paragraphs::{Paragraph, ParagraphVecShort, Paragraphs, VecExt},
-        Child, Component, Event, EventCtx, Pad,
-    },
-    geometry::{LinearPlacement, Point, Rect},
-    model_tr::{
-        bootloader::{
-            theme::{BLD_BG, TEXT_NORMAL},
-            title::Title,
-            ReturnToC,
-        },
-        component::ButtonMsg::Clicked,
-    },
+    component::{Child, Component, Event, EventCtx, Label, Pad},
+    geometry::{Alignment, Alignment2D, Rect},
 };
 
-use crate::ui::model_tr::{
-    bootloader::theme::bld_button_default,
-    component::{Button, ButtonPos},
-    constant::{HEIGHT, WIDTH},
+use super::{
+    super::{
+        component::{ButtonController, ButtonControllerMsg::Triggered, ButtonLayout, ButtonPos},
+        theme::{BUTTON_HEIGHT, ICON_WARN_TITLE, TITLE_AREA_HEIGHT},
+    },
+    theme::{BLD_BG, BLD_FG, TEXT_NORMAL},
+    ReturnToC,
 };
+
+const LEFT_BUTTON_TEXT: &str = "INSTALL FW";
+const RIGHT_BUTTON_TEXT: &str = "MENU";
 
 #[repr(u32)]
 #[derive(Copy, Clone)]
 pub enum IntroMsg {
-    Menu = 1,
-    Host = 2,
+    GoToMenu = 1,
+    InstallFirmware = 2,
 }
 impl ReturnToC for IntroMsg {
     fn return_to_c(self) -> u32 {
@@ -32,69 +27,65 @@ impl ReturnToC for IntroMsg {
     }
 }
 
-pub struct Intro {
+pub struct Intro<'a> {
     bg: Pad,
-    title: Child<Title>,
-    host: Child<Button<&'static str>>,
-    menu: Child<Button<&'static str>>,
-    text: Child<Paragraphs<ParagraphVecShort<&'static str>>>,
+    title: Child<Label<&'a str>>,
+    buttons: Child<ButtonController<&'static str>>,
+    text: Child<Label<&'a str>>,
+    warn: Option<Child<Label<&'a str>>>,
 }
 
-impl Intro {
-    pub fn new(bld_version: &'static str, vendor: &'static str, version: &'static str) -> Self {
-        let mut messages = ParagraphVecShort::new();
-
-        messages.add(Paragraph::new(&TEXT_NORMAL, version));
-        messages.add(Paragraph::new(&TEXT_NORMAL, vendor));
-
-        let p1 =
-            Paragraphs::new(messages).with_placement(LinearPlacement::vertical().align_at_start());
-
-        let mut instance = Self {
-            bg: Pad::with_background(BLD_BG),
-            title: Child::new(Title::new(bld_version)),
-            host: Child::new(Button::with_text(
-                ButtonPos::Left,
-                "INSTALL FIRMWARE",
-                bld_button_default(),
+impl<'a> Intro<'a> {
+    pub fn new(title: &'a str, content: &'a str, fw_ok: bool) -> Self {
+        Self {
+            bg: Pad::with_background(BLD_BG).with_clear(),
+            title: Child::new(Label::centered(title, TEXT_NORMAL).vertically_centered()),
+            buttons: Child::new(ButtonController::new(ButtonLayout::text_none_text(
+                LEFT_BUTTON_TEXT,
+                RIGHT_BUTTON_TEXT,
+            ))),
+            text: Child::new(Label::left_aligned(content, TEXT_NORMAL).vertically_centered()),
+            warn: (!fw_ok).then_some(Child::new(
+                Label::new("FIRMWARE CORRUPTED", Alignment::Start, TEXT_NORMAL)
+                    .vertically_centered(),
             )),
-            menu: Child::new(Button::with_text(
-                ButtonPos::Right,
-                "MENU",
-                bld_button_default(),
-            )),
-            text: Child::new(p1),
-        };
-
-        instance.bg.clear();
-        instance
+        }
     }
 }
 
-impl Component for Intro {
+impl<'a> Component for Intro<'a> {
     type Msg = IntroMsg;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        self.bg
-            .place(Rect::new(Point::new(0, 0), Point::new(WIDTH, HEIGHT)));
-        self.title
-            .place(Rect::new(Point::new(10, 0), Point::new(128, 8)));
+        self.bg.place(bounds);
 
-        let button_area = bounds.split_bottom(12).1;
-        self.host.place(button_area);
-        self.menu.place(button_area);
+        // Title on top, buttons on bottom, text in between
+        let (title_area, text_and_buttons_area) = bounds.split_top(TITLE_AREA_HEIGHT);
+        let (text_area, buttons_area) = text_and_buttons_area.split_bottom(BUTTON_HEIGHT);
 
-        self.text
-            .place(Rect::new(Point::new(10, 20), Point::new(118, 50)));
+        self.title.place(title_area);
+        self.buttons.place(buttons_area);
+        self.text.place(text_area);
+
+        if self.warn.is_some() {
+            let (warn_area, text_area) = text_area.split_top(10);
+            self.warn.place(warn_area);
+            self.text.place(text_area);
+        } else {
+            self.text.place(text_area);
+        }
+
         bounds
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
-        if let Some(Clicked) = self.menu.event(ctx, event) {
-            return Some(Self::Msg::Menu);
+        let msg = self.buttons.event(ctx, event);
+
+        if let Some(Triggered(ButtonPos::Left, _)) = msg {
+            return Some(Self::Msg::InstallFirmware);
         };
-        if let Some(Clicked) = self.host.event(ctx, event) {
-            return Some(Self::Msg::Host);
+        if let Some(Triggered(ButtonPos::Right, _)) = msg {
+            return Some(Self::Msg::GoToMenu);
         };
         None
     }
@@ -102,15 +93,19 @@ impl Component for Intro {
     fn paint(&mut self) {
         self.bg.paint();
         self.title.paint();
+        let area = self.bg.area;
+        ICON_WARN_TITLE.draw(area.top_left(), Alignment2D::TOP_LEFT, BLD_FG, BLD_BG);
+        ICON_WARN_TITLE.draw(area.top_right(), Alignment2D::TOP_RIGHT, BLD_FG, BLD_BG);
+        self.warn.paint();
         self.text.paint();
-        self.host.paint();
-        self.menu.paint();
+        self.buttons.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.title.bounds(sink);
+        self.warn.bounds(sink);
         self.text.bounds(sink);
-        self.host.bounds(sink);
-        self.menu.bounds(sink);
+        self.buttons.bounds(sink);
     }
 }

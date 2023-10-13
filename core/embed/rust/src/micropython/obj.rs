@@ -303,6 +303,23 @@ impl TryFrom<(Obj, Obj)> for Obj {
     }
 }
 
+impl TryFrom<(Obj, Obj, Obj)> for Obj {
+    type Error = Error;
+
+    fn try_from(val: (Obj, Obj, Obj)) -> Result<Self, Self::Error> {
+        // SAFETY:
+        //  - Should work with any micropython objects.
+        // EXCEPTION: Will raise if allocation fails.
+        let values = [val.0, val.1, val.2];
+        let obj = catch_exception(|| unsafe { ffi::mp_obj_new_tuple(3, values.as_ptr()) })?;
+        if obj.is_null() {
+            Err(Error::AllocationFailed)
+        } else {
+            Ok(obj)
+        }
+    }
+}
+
 //
 // # Additional conversions based on the methods above.
 //
@@ -423,5 +440,22 @@ impl Obj {
     pub fn is_str(self) -> bool {
         let is_type_str = unsafe { ffi::mp_type_str.is_type_of(self) };
         is_type_str || self.is_qstr()
+    }
+
+    pub fn type_<'a>(self) -> Option<&'a super::typ::Type> {
+        if self.is_ptr() {
+            // SAFETY:
+            // Safe for pointers, for as long as MicroPython behaves sanely.
+            // We assume that:
+            // * The pointer is a valid MicroPython object, which has `ObjBase` as its first
+            //   element.
+            // * The type pointer points to a valid type object.
+            // * The pointee has a 'static lifetime, i.e., either is ROM-based, or GC
+            //   allocated.
+            let base = self.as_ptr() as *const ObjBase;
+            unsafe { (*base).type_.as_ref() }
+        } else {
+            None
+        }
     }
 }

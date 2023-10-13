@@ -61,6 +61,20 @@ def firmware_vendor() -> str:
 
 
 # extmod/modtrezorutils/modtrezorutils.c
+def unit_color() -> int | None:
+    """
+    Returns the color of the unit.
+    """
+
+
+# extmod/modtrezorutils/modtrezorutils.c
+def unit_btconly() -> bool | None:
+    """
+    Returns True if the unit is BTConly.
+    """
+
+
+# extmod/modtrezorutils/modtrezorutils.c
 def reboot_to_bootloader() -> None:
     """
     Reboots to bootloader.
@@ -68,15 +82,34 @@ def reboot_to_bootloader() -> None:
 
 
 # extmod/modtrezorutils/modtrezorutils.c
-def usb_data_connected() -> bool:
+def bootloader_locked() -> bool | None:
     """
-    Returns whether USB has been enumerated/configured
-    (and is not just connected by cable without data pins)
+    Returns True/False if the the bootloader is locked/unlocked and None if
+    the feature is not supported.
     """
 SCM_REVISION: bytes
+"""Git commit hash of the firmware."""
 VERSION_MAJOR: int
+"""Major version."""
 VERSION_MINOR: int
+"""Minor version."""
 VERSION_PATCH: int
+"""Patch version."""
+USE_SD_CARD: bool
+"""Whether the hardware supports SD card."""
+USE_BACKLIGHT: bool
+"""Whether the hardware supports backlight brightness control."""
+USE_OPTIGA: bool
+"""Whether the hardware supports Optiga secure element."""
 MODEL: str
+"""Model name."""
+MODEL_FULL_NAME: str
+"""Full name including Trezor prefix."""
+INTERNAL_MODEL: str
+"""Internal model code."""
 EMULATOR: bool
+"""Whether the firmware is running in the emulator."""
 BITCOIN_ONLY: bool
+"""Whether the firmware is Bitcoin-only."""
+UI_LAYOUT: str
+"""UI layout identifier ("tt" for model T, "tr" for models One and R)."""

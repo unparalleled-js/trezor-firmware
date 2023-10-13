@@ -3,11 +3,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from trezor.messages import GetPublicKey, PublicKey
     from trezor.protobuf import MessageType
-    from trezor.wire import Context
 
 
 async def get_public_key(
-    ctx: Context, msg: GetPublicKey, auth_msg: MessageType | None = None
+    msg: GetPublicKey, auth_msg: MessageType | None = None
 ) -> PublicKey:
     from trezor import wire
     from trezor.enums import InputScriptType
@@ -33,7 +32,7 @@ async def get_public_key(
         if auth_msg.address_n != address_n[: len(auth_msg.address_n)]:
             raise FORBIDDEN_KEY_PATH
 
-    keychain = await get_keychain(ctx, curve_name, [paths.AlwaysMatchingSchema])
+    keychain = await get_keychain(curve_name, [paths.AlwaysMatchingSchema])
 
     node = keychain.derive(address_n)
 
@@ -80,9 +79,31 @@ async def get_public_key(
     )
 
     if msg.show_display:
-        from trezor.ui.layouts import show_xpub
+        from trezor.ui.layouts import confirm_path_warning, show_pubkey
 
-        await show_xpub(ctx, node_xpub, "XPUB")
+        from apps.common.paths import address_n_to_str
+
+        from .keychain import address_n_to_name
+
+        path = address_n_to_str(address_n)
+        account_name = address_n_to_name(
+            coin, address_n, script_type, account_level=True
+        )
+        if account_name is None:
+            account = None
+            await confirm_path_warning(path)
+        elif account_name == "":
+            account = coin.coin_shortcut
+        else:
+            account = f"{coin.coin_shortcut} {account_name}"
+        await show_pubkey(
+            node_xpub,
+            "XPUB",
+            account=account,
+            path=path,
+            mismatch_title="XPUB mismatch?",
+            br_type="show_xpub",
+        )
 
     return PublicKey(
         node=node_type,

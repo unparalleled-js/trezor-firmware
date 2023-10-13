@@ -8,7 +8,7 @@ import storage.device as storage_device
 from trezor import config, io, log, loop, utils, wire, workflow
 from trezor.crypto import hashlib
 from trezor.crypto.curve import nist256p1
-from trezor.ui.layouts import show_popup
+from trezor.ui.layouts import show_error_popup
 
 from apps.base import set_homescreen
 from apps.common import cbor
@@ -18,6 +18,7 @@ from .credential import Credential, Fido2Credential
 
 if TYPE_CHECKING:
     from typing import Any, Awaitable, Callable, Coroutine, Iterable, Iterator
+
     from .credential import U2fCredential
 
     HID = io.HID
@@ -566,9 +567,10 @@ class KeepaliveCallback:
 
 
 async def verify_user(keepalive_callback: KeepaliveCallback) -> bool:
-    from trezor.wire import PinCancelled, PinInvalid
-    from apps.common.request_pin import verify_user_pin
     import trezor.pin
+    from trezor.wire import PinCancelled, PinInvalid
+
+    from apps.common.request_pin import verify_user_pin
 
     try:
         trezor.pin.keepalive_callback = keepalive_callback
@@ -584,6 +586,7 @@ async def verify_user(keepalive_callback: KeepaliveCallback) -> bool:
 
 def _confirm_fido_choose(title: str, credentials: list[Credential]) -> Awaitable[int]:
     from trezor.ui.layouts.fido import confirm_fido
+
     from . import knownapps
 
     assert len(credentials) > 0
@@ -597,7 +600,7 @@ def _confirm_fido_choose(title: str, credentials: list[Credential]) -> Awaitable
     app = knownapps.by_rp_id_hash(repr_credential.rp_id_hash)
     icon_name = None if app is None else app.icon_name
     return confirm_fido(
-        None, title, app_name, icon_name, [c.account_name() for c in credentials]
+        title, app_name, icon_name, [c.account_name() for c in credentials]
     )
 
 
@@ -611,14 +614,14 @@ async def _confirm_fido(title: str, credential: Credential) -> bool:
 
 async def _confirm_bogus_app(title: str) -> None:
     if _last_auth_valid:
-        await show_popup(
+        await show_error_popup(
             title,
             "This device is already registered with this application.",
             "Already registered.",
             timeout_ms=_POPUP_TIMEOUT_MS,
         )
     else:
-        await show_popup(
+        await show_error_popup(
             title,
             "This device is not registered with this application.",
             "Not registered.",
@@ -643,7 +646,7 @@ class State:
     def timeout_ms(self) -> int:
         raise NotImplementedError
 
-    async def confirm_dialog(self) -> bool | "State":
+    async def confirm_dialog(self) -> "bool | State":
         raise NotImplementedError
 
     async def on_confirm(self) -> None:
@@ -706,6 +709,7 @@ class U2fUnlock(State):
 
     async def confirm_dialog(self) -> bool:
         from trezor.wire import PinCancelled, PinInvalid
+
         from apps.common.request_pin import verify_user_pin
 
         try:
@@ -762,7 +766,7 @@ class Fido2Unlock(Fido2State):
         self.resp: Cmd | None = None
         self.dialog_mgr = dialog_mgr
 
-    async def confirm_dialog(self) -> bool | "State":
+    async def confirm_dialog(self) -> "bool | State":
         if not await verify_user(KeepaliveCallback(self.cid, self.iface)):
             return False
 
@@ -834,12 +838,12 @@ class Fido2ConfirmExcluded(Fido2ConfirmMakeCredential):
         await send_cmd(cmd, self.iface)
         self.finished = True
 
-        await show_popup(
+        await show_error_popup(
             "FIDO2 Register",
             "This device is already registered with {}.",
             "Already registered.",
             self._cred.rp_id,  # description_param
-            _POPUP_TIMEOUT_MS,
+            timeout_ms=_POPUP_TIMEOUT_MS,
         )
 
 
@@ -917,7 +921,7 @@ class Fido2ConfirmNoPin(State):
         await send_cmd(cmd, self.iface)
         self.finished = True
 
-        await show_popup(
+        await show_error_popup(
             "FIDO2 Verify User",
             "Please enable PIN protection.",
             "Unable to verify user.",
@@ -940,12 +944,12 @@ class Fido2ConfirmNoCredentials(Fido2ConfirmGetAssertion):
         await send_cmd(cmd, self.iface)
         self.finished = True
 
-        await show_popup(
+        await show_error_popup(
             "FIDO2 Authenticate",
             "This device is not registered with\n{}.",
             "Not registered.",
             self._creds[0].app_name(),  # description_param
-            _POPUP_TIMEOUT_MS,
+            timeout_ms=_POPUP_TIMEOUT_MS,
         )
 
 
@@ -1502,7 +1506,7 @@ def _cbor_make_credential_process(req: Cmd, dialog_mgr: DialogManager) -> State 
         cred = Fido2Credential()
         cred.rp_id = rp_id
         cred.rp_id_hash = rp_id_hash
-        cred.rp_name = param[_MAKECRED_CMD_RP].get("name", None)
+        cred.rp_name = rp.get("name", None)
         cred.user_id = user["id"]
         cred.user_name = user.get("name", None)
         cred.user_display_name = user.get("displayName", None)
@@ -1552,6 +1556,20 @@ def _cbor_make_credential_process(req: Cmd, dialog_mgr: DialogManager) -> State 
         cred.use_sign_count = app.use_sign_count
     else:
         cred.use_sign_count = bool(_DEFAULT_USE_SIGN_COUNT)
+
+    if app is not None and app.use_compact:
+        # Remove unnecessary information.
+
+        # The user_id is mandatory only for resident credentials.
+        if not resident_key:
+            cred.user_id = None
+
+        # We prefer to show rp_id, so we don't need rp_name.
+        cred.rp_name = None
+
+        # We prefer to show user_name, so we don't need user_display_name if we have user_name.
+        if cred.user_name:
+            cred.user_display_name = None
 
     # Check data types.
     if (
@@ -1779,8 +1797,7 @@ def _cbor_get_assertion_hmac_secret(
     cred: Credential, hmac_secret: dict
 ) -> bytes | None:
     from storage.fido2 import KEY_AGREEMENT_PRIVKEY
-    from trezor.crypto import aes
-    from trezor.crypto import hmac
+    from trezor.crypto import aes, hmac
 
     key_agreement = hmac_secret[1]  # The public key of platform key agreement key.
     # NOTE: We should check the key_agreement[COSE_KEY_ALG] here, but to avoid compatibility issues we don't,

@@ -17,14 +17,14 @@ from .tx_info import OriginalTxInfo
 
 if TYPE_CHECKING:
     from trezor.crypto import bip32
-    from trezor.messages import SignTx, TxInput, TxOutput, TxAckPaymentRequest
+    from trezor.messages import SignTx, TxAckPaymentRequest, TxInput, TxOutput
 
     from apps.common.coininfo import CoinInfo
     from apps.common.keychain import Keychain
 
     from ..authorization import CoinJoinAuthorization
-    from .tx_info import TxInfo
     from .payment_request import PaymentRequestVerifier
+    from .tx_info import TxInfo
 
 
 # An Approver object computes the transaction totals and either prompts the user
@@ -52,6 +52,9 @@ class Approver:
 
         self.amount_unit = tx.amount_unit
         self.has_unverified_external_input = False
+
+        # output numbering to be used in confirmation dialogs
+        self.external_output_index = 0
 
     def is_payjoin(self) -> bool:
         # A PayJoin is a replacement transaction which manipulates the external inputs of the
@@ -141,6 +144,7 @@ class BasicApprover(Approver):
         super().__init__(tx, coin)
         self.change_count = 0  # the number of change-outputs
         self.foreign_address_confirmed = False
+        self.chunkify = bool(tx.chunkify)
 
     async def add_internal_input(self, txi: TxInput, node: bip32.HDNode) -> None:
         if not validate_path_against_script_type(self.coin, txi):
@@ -220,7 +224,14 @@ class BasicApprover(Approver):
         elif txo.payment_req_index is None or self.show_payment_req_details:
             # Ask user to confirm output, unless it is part of a payment
             # request, which gets confirmed separately.
-            await helpers.confirm_output(txo, self.coin, self.amount_unit)
+            await helpers.confirm_output(
+                txo,
+                self.coin,
+                self.amount_unit,
+                self.external_output_index,
+                self.chunkify,
+            )
+            self.external_output_index += 1
 
     async def add_payment_request(
         self, msg: TxAckPaymentRequest, keychain: Keychain
@@ -239,19 +250,23 @@ class BasicApprover(Approver):
         if not orig_txs:
             return
 
+        title = self._replacement_title(tx_info, orig_txs)
+        for orig in orig_txs:
+            await helpers.confirm_replacement(title, orig.orig_hash)
+
+    def _replacement_title(
+        self, tx_info: TxInfo, orig_txs: list[OriginalTxInfo]
+    ) -> str:
         if self.is_payjoin():
-            description = "PayJoin"
+            return "PayJoin"
         elif tx_info.rbf_disabled() and any(
             not orig.rbf_disabled() for orig in orig_txs
         ):
-            description = "Finalize transaction"
+            return "Finalize transaction"
         elif len(orig_txs) > 1:
-            description = "Meld transactions"
+            return "Meld transactions"
         else:
-            description = "Update transaction"
-
-        for orig in orig_txs:
-            await helpers.confirm_replacement(description, orig.orig_hash)
+            return "Update transaction"
 
     async def approve_tx(self, tx_info: TxInfo, orig_txs: list[OriginalTxInfo]) -> None:
         from trezor.wire import NotEnoughFunds
@@ -263,6 +278,9 @@ class BasicApprover(Approver):
 
         if self.has_unverified_external_input:
             await helpers.confirm_unverified_external_input()
+
+        if tx_info.wallet_path.get_path() is None:
+            await helpers.confirm_multiple_accounts()
 
         fee = self.total_in - self.total_out
 
@@ -316,18 +334,20 @@ class BasicApprover(Approver):
                     )
 
             if not self.is_payjoin():
+                title = self._replacement_title(tx_info, orig_txs)
                 # Not a PayJoin: Show the actual fee difference, since any difference in the fee is
                 # coming entirely from the user's own funds and from decreases of external outputs.
                 # We consider the decreases as belonging to the user.
                 await helpers.confirm_modify_fee(
-                    fee - orig_fee, fee, fee_rate, coin, amount_unit
+                    title, fee - orig_fee, fee, fee_rate, coin, amount_unit
                 )
             elif spending > orig_spending:
+                title = self._replacement_title(tx_info, orig_txs)
                 # PayJoin and user is spending more: Show the increase in the user's contribution
                 # to the fee, ignoring any contribution from external inputs. Decreasing of
                 # external outputs is not allowed in PayJoin, so there is no need to handle those.
                 await helpers.confirm_modify_fee(
-                    spending - orig_spending, fee, fee_rate, coin, amount_unit
+                    title, spending - orig_spending, fee, fee_rate, coin, amount_unit
                 )
             else:
                 # PayJoin and user is not spending more: When new external inputs are involved and

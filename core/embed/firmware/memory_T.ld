@@ -22,6 +22,9 @@ data_size = SIZEOF(.data);
 ccmram_start = ORIGIN(CCMRAM);
 ccmram_end = ORIGIN(CCMRAM) + LENGTH(CCMRAM);
 
+/* IMAGE_HEADER_SIZE is 0x400, this is for interaction-less firmware update start */
+firmware_header_start = ccmram_end - 0x400;
+
 /* used by the startup code to wipe memory */
 sram_start = ORIGIN(SRAM);
 sram_end = ORIGIN(SRAM) + LENGTH(SRAM);
@@ -45,6 +48,9 @@ SECTIONS {
 
   .flash2 : ALIGN(512) {
     build/firmware/frozen_mpy.o(.rodata*);
+    build/firmware/vendor/secp256k1-zkp/src/secp256k1.o(.rodata*);
+    build/firmware/vendor/secp256k1-zkp/src/precomputed_ecmult.o(.rodata*);
+    build/firmware/vendor/secp256k1-zkp/src/precomputed_ecmult_gen.o(.rodata*);
     build/firmware/vendor/trezor-crypto/aes/aestab.o(.rodata*);
     . = ALIGN(4);
     */libtrezor_lib.a:(.text*);

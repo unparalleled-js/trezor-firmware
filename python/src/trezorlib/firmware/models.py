@@ -18,11 +18,30 @@ import typing as t
 from dataclasses import dataclass
 from enum import Enum
 
+if t.TYPE_CHECKING:
+    from typing_extensions import Self
+
 
 class Model(Enum):
     ONE = b"T1B1"
     T = b"T2T1"
     R = b"T2B1"
+    DISC1 = b"D001"
+
+    @classmethod
+    def from_hw_model(cls, hw_model: t.Union["Self", bytes]) -> "Self":
+        if isinstance(hw_model, cls):
+            return hw_model
+        if hw_model == b"\x00\x00\x00\x00":
+            return cls.T
+        raise ValueError(f"Unknown hardware model: {hw_model}")
+
+    def model_keys(self, dev_keys: bool = False) -> "ModelKeys":
+        if dev_keys:
+            model_map = MODEL_MAP_DEV
+        else:
+            model_map = MODEL_MAP
+        return model_map[self]
 
 
 @dataclass
@@ -158,13 +177,44 @@ TREZOR_T_DEV = ModelKeys(
     firmware_sigs_needed=-1,
 )
 
+TREZOR_R = ModelKeys(
+    production=True,
+    boardloader_keys=[
+        bytes.fromhex(key)
+        for key in (
+            "549a45557008d5518a9a151dc6a3568cf73830a7fe419f2626d9f30d024b2bec",
+            "c16c7027f8a3962607bf24cdec2e3cd2344e1f6071e8260b3dda52b1a5107cb7",
+            "87180f933178b2832bee2d7046c7f4b98300ca7d7fb2e4567169c8730a1c4020",
+        )
+    ],
+    boardloader_sigs_needed=2,
+    bootloader_keys=[
+        bytes.fromhex(key)
+        for key in (
+            "bf4e6f004fcb32cec683f22c88c1a86c1518c6de8ac97002d84a63bea3e375dd",
+            "d2def691c1e9d809d8190cf7af935c10688f68983479b4ee9abac19104878ec1",
+            "07c85134946bf89fa19bdc2c5e5ff9ce01296508ee0863d0ff6d63331d1a2516",
+        )
+    ],
+    bootloader_sigs_needed=2,
+    firmware_keys=(),
+    firmware_sigs_needed=-1,
+)
+
+TREZOR_R_DEV = TREZOR_T_DEV
+DISC1 = TREZOR_T_DEV
+DISC1_DEV = TREZOR_T_DEV
 
 MODEL_MAP = {
     Model.ONE: TREZOR_ONE_V3,
     Model.T: TREZOR_T,
+    Model.R: TREZOR_R,
+    Model.DISC1: DISC1,
 }
 
 MODEL_MAP_DEV = {
     Model.ONE: TREZOR_ONE_V3_DEV,
     Model.T: TREZOR_T_DEV,
+    Model.R: TREZOR_R_DEV,
+    Model.DISC1: DISC1_DEV,
 }

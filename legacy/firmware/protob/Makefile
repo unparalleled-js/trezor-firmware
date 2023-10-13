@@ -4,17 +4,19 @@ endif
 
 SKIPPED_MESSAGES := Binance Cardano DebugMonero Eos Monero Ontology Ripple SdProtect Tezos WebAuthn \
 	DebugLinkRecordScreen DebugLinkEraseSdCard DebugLinkWatchLayout \
-	DebugLinkLayout GetNonce \
+	DebugLinkLayout DebugLinkResetDebugEvents GetNonce \
 	TxAckInput TxAckOutput TxAckPrev TxAckPaymentRequest \
 	EthereumSignTypedData EthereumTypedDataStructRequest EthereumTypedDataStructAck \
-	EthereumTypedDataValueRequest EthereumTypedDataValueAck
+	EthereumTypedDataValueRequest EthereumTypedDataValueAck ShowDeviceTutorial \
+	UnlockBootloader AuthenticateDevice AuthenticityProof
 
 ifeq ($(BITCOIN_ONLY), 1)
 SKIPPED_MESSAGES += Ethereum NEM Stellar
 endif
 
 PROTO_NAMES = messages messages-bitcoin messages-common messages-crypto messages-debug \
-	messages-ethereum messages-management messages-nem messages-stellar
+	messages-ethereum messages-ethereum-definitions messages-management messages-nem \
+	messages-stellar
 
 PROTO_OPTIONS = $(PROTO_NAMES:=.options)
 PROTO_COMPILED = $(PROTO_NAMES:=.pb)

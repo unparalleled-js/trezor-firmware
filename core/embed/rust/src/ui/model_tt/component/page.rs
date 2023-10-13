@@ -2,11 +2,11 @@ use crate::ui::{
     component::{
         base::ComponentExt,
         paginated::{AuxPageMsg, PageMsg},
-        Component, Event, EventCtx, FixedHeightBar, Label, Pad, Paginate,
+        Component, Event, EventCtx, FixedHeightBar, Pad, Paginate,
     },
     display::{self, toif::Icon, Color},
-    geometry::{Insets, Rect},
-    model_tt::component::{Button, ButtonMsg},
+    geometry::{Grid, Insets, Rect},
+    model_tt::component::{Button, ButtonContent, ButtonMsg},
 };
 
 use super::{
@@ -14,15 +14,54 @@ use super::{
     theme, CancelConfirmMsg, Loader, ScrollBar, Swipe, SwipeDirection,
 };
 
-pub struct SwipePage<T, U> {
+/// Describes behavior of left button.
+enum ButtonPrevCancels {
+    /// Button never causes `PageMsg::Aux(AuxPageMsg::GoBack)` to be emitted.
+    Never,
+
+    /// Button cancels the layout if pressed on the first page. Otherwise it
+    /// goes to previous page.
+    FirstPage,
+
+    /// Button cancels the layout on any page, except the last where controls
+    /// are displayed.
+    AnyPage,
+}
+
+impl ButtonPrevCancels {
+    fn should_cancel(&self, is_first_page: bool) -> bool {
+        match self {
+            ButtonPrevCancels::Never => false,
+            ButtonPrevCancels::FirstPage => is_first_page,
+            ButtonPrevCancels::AnyPage => true,
+        }
+    }
+
+    fn icon(&self, is_first_page: bool) -> Icon {
+        match self {
+            ButtonPrevCancels::Never => theme::ICON_UP,
+            ButtonPrevCancels::FirstPage if is_first_page => theme::ICON_CANCEL,
+            ButtonPrevCancels::FirstPage => theme::ICON_UP,
+            ButtonPrevCancels::AnyPage => theme::ICON_BACK,
+        }
+    }
+}
+
+pub struct SwipePage<T, U>
+where
+    U: Component,
+{
     content: T,
-    buttons: U,
+    controls: U,
     pad: Pad,
     swipe: Swipe,
     scrollbar: ScrollBar,
-    hint: Label<&'static str>,
-    button_back: Option<Button<&'static str>>,
+    button_prev: Button<&'static str>,
+    button_next: Button<&'static str>,
+    button_prev_cancels: ButtonPrevCancels,
+    is_go_back: Option<fn(&U::Msg) -> bool>,
     swipe_left: bool,
+    swipe_right: bool,
     fade: Option<u16>,
 }
 
@@ -32,22 +71,39 @@ where
     T: Component,
     U: Component,
 {
-    pub fn new(content: T, buttons: U, background: Color) -> Self {
+    pub fn new(content: T, controls: U, background: Color) -> Self {
         Self {
             content,
-            buttons,
+            controls,
             scrollbar: ScrollBar::vertical(),
             swipe: Swipe::new(),
             pad: Pad::with_background(background),
-            hint: Label::centered("SWIPE TO CONTINUE", theme::label_page_hint()),
-            button_back: None,
+            button_prev: Button::with_icon(theme::ICON_UP).initially_enabled(false),
+            button_next: Button::with_icon(theme::ICON_DOWN),
+            button_prev_cancels: ButtonPrevCancels::Never,
+            is_go_back: None,
             swipe_left: false,
+            swipe_right: false,
             fade: None,
         }
     }
 
     pub fn with_back_button(mut self) -> Self {
-        self.button_back = Some(Button::with_icon(Icon::new(theme::ICON_BACK)));
+        self.button_prev_cancels = ButtonPrevCancels::AnyPage;
+        self.button_prev = Button::with_icon(theme::ICON_BACK).initially_enabled(true);
+        self
+    }
+
+    pub fn with_cancel_on_first_page(mut self) -> Self {
+        self.button_prev_cancels = ButtonPrevCancels::FirstPage;
+        self.button_prev = Button::with_icon(theme::ICON_CANCEL).initially_enabled(true);
+        self
+    }
+
+    /// If `controls` message matches the function then we will go page back
+    /// instead of propagating the message to parent component.
+    pub fn with_go_back(mut self, is_go_back: fn(&U::Msg) -> bool) -> Self {
+        self.is_go_back = Some(is_go_back);
         self
     }
 
@@ -56,15 +112,40 @@ where
         self
     }
 
+    pub fn with_swipe_right(mut self) -> Self {
+        self.swipe_right = true;
+        self
+    }
+
     fn setup_swipe(&mut self) {
         self.swipe.allow_up = self.scrollbar.has_next_page();
         self.swipe.allow_down = self.scrollbar.has_previous_page();
         self.swipe.allow_left = self.swipe_left;
+        self.swipe.allow_right = self.swipe_right;
     }
 
     fn on_page_change(&mut self, ctx: &mut EventCtx) {
         // Adjust the swipe parameters according to the scrollbar.
         self.setup_swipe();
+
+        // Enable/disable prev/next buttons.
+        self.button_prev.set_content(
+            ctx,
+            ButtonContent::Icon(
+                self.button_prev_cancels
+                    .icon(self.scrollbar.active_page == 0),
+            ),
+        );
+        self.button_prev.enable_if(
+            ctx,
+            self.scrollbar.has_previous_page()
+                || matches!(
+                    self.button_prev_cancels,
+                    ButtonPrevCancels::FirstPage | ButtonPrevCancels::AnyPage
+                ),
+        );
+        self.button_next
+            .enable_if(ctx, self.scrollbar.has_next_page());
 
         // Change the page in the content, make sure it gets completely repainted and
         // clear the background under it.
@@ -83,15 +164,10 @@ where
         let mut layout = PageLayout::new(bounds);
         self.pad.place(bounds);
         self.swipe.place(bounds);
+        self.button_prev.place(layout.button_prev);
+        self.button_next.place(layout.button_next);
 
-        if self.button_back.is_some() {
-            self.button_back.place(layout.hint_button);
-            self.hint.place(layout.hint_button_hint);
-        } else {
-            self.hint.place(layout.hint);
-        }
-
-        let buttons_area = self.buttons.place(layout.buttons);
+        let buttons_area = self.controls.place(layout.controls);
         layout.set_buttons_height(buttons_area.height());
         self.scrollbar.place(layout.scrollbar);
 
@@ -150,6 +226,9 @@ where
                 SwipeDirection::Left if self.swipe_left => {
                     return Some(PageMsg::Aux(AuxPageMsg::SwipeLeft));
                 }
+                SwipeDirection::Right if self.swipe_right => {
+                    return Some(PageMsg::Aux(AuxPageMsg::SwipeRight));
+                }
                 _ => {
                     // Ignore other directions.
                 }
@@ -159,14 +238,35 @@ where
             return Some(PageMsg::Content(msg));
         }
         if !self.scrollbar.has_next_page() {
-            if let Some(msg) = self.buttons.event(ctx, event) {
+            if let Some(msg) = self.controls.event(ctx, event) {
+                // Handle the case when one of the controls buttons is configured to go back a
+                // page.
+                if let Some(f) = self.is_go_back {
+                    if f(&msg) {
+                        self.scrollbar.go_to_previous_page();
+                        self.on_page_change(ctx);
+                        return None;
+                    }
+                }
                 return Some(PageMsg::Controls(msg));
             }
         } else {
-            if let Some(ButtonMsg::Clicked) = self.button_back.event(ctx, event) {
-                return Some(PageMsg::Aux(AuxPageMsg::GoBack));
+            if let Some(ButtonMsg::Clicked) = self.button_prev.event(ctx, event) {
+                if self
+                    .button_prev_cancels
+                    .should_cancel(self.scrollbar.active_page == 0)
+                {
+                    return Some(PageMsg::Aux(AuxPageMsg::GoBack));
+                }
+                self.scrollbar.go_to_previous_page();
+                self.on_page_change(ctx);
+                return None;
             }
-            self.hint.event(ctx, event);
+            if let Some(ButtonMsg::Clicked) = self.button_next.event(ctx, event) {
+                self.scrollbar.go_to_next_page();
+                self.on_page_change(ctx);
+                return None;
+            }
         }
         None
     }
@@ -178,10 +278,10 @@ where
             self.scrollbar.paint();
         }
         if self.scrollbar.has_next_page() {
-            self.button_back.paint();
-            self.hint.paint();
+            self.button_prev.paint();
+            self.button_next.paint();
         } else {
-            self.buttons.paint();
+            self.controls.paint();
         }
         if let Some(val) = self.fade.take() {
             // Note that this is blocking and takes some time.
@@ -189,15 +289,16 @@ where
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.pad.area);
         self.scrollbar.bounds(sink);
         self.content.bounds(sink);
         if !self.scrollbar.has_next_page() {
-            self.buttons.bounds(sink);
+            self.controls.bounds(sink);
         } else {
-            self.button_back.bounds(sink);
-            self.hint.bounds(sink);
+            self.button_prev.bounds(sink);
+            self.button_next.bounds(sink);
         }
     }
 }
@@ -206,15 +307,14 @@ where
 impl<T, U> crate::trace::Trace for SwipePage<T, U>
 where
     T: crate::trace::Trace,
-    U: crate::trace::Trace,
+    U: crate::trace::Trace + Component,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("SwipePage");
-        t.field("active_page", &self.scrollbar.active_page);
-        t.field("page_count", &self.scrollbar.page_count);
-        t.field("content", &self.content);
-        t.field("buttons", &self.buttons);
-        t.close();
+        t.component("SwipePage");
+        t.int("active_page", self.scrollbar.active_page as i64);
+        t.int("page_count", self.scrollbar.page_count as i64);
+        t.child("content", &self.content);
+        t.child("controls", &self.controls);
     }
 }
 
@@ -226,43 +326,35 @@ pub struct PageLayout {
     /// Scroll bar when multiple pages.
     pub scrollbar: Rect,
     /// Controls displayed on last page.
-    pub buttons: Rect,
-    /// Swipe to continue (unless back button enabled).
-    pub hint: Rect,
-    /// Optional back button on every page.
-    pub hint_button: Rect,
-    /// Hint area when back button is enabled.
-    pub hint_button_hint: Rect,
+    pub controls: Rect,
+    pub button_prev: Rect,
+    pub button_next: Rect,
 }
 
 impl PageLayout {
-    const SCROLLBAR_WIDTH: i16 = 15;
+    const SCROLLBAR_WIDTH: i16 = 8;
     const SCROLLBAR_SPACE: i16 = 5;
-    const HINT_OFF: i16 = 19;
 
     pub fn new(area: Rect) -> Self {
-        let (_, hint) = area.split_bottom(Self::HINT_OFF);
-        let (buttons, _space) = area.split_right(theme::CONTENT_BORDER);
+        let (controls, _space) = area.split_right(theme::CONTENT_BORDER);
         let (_space, content) = area.split_left(theme::CONTENT_BORDER);
         let (content_single_page, _space) = content.split_right(theme::CONTENT_BORDER);
         let (content, scrollbar) =
             content.split_right(Self::SCROLLBAR_SPACE + Self::SCROLLBAR_WIDTH);
         let (_space, scrollbar) = scrollbar.split_left(Self::SCROLLBAR_SPACE);
 
-        let (_, one_row_buttons) = area.split_bottom(theme::button_rows(1));
-        let (hint_button, hint_button_hint) = one_row_buttons.split_left(one_row_buttons.height());
-        let vertical_inset = (hint_button_hint.height() - Self::HINT_OFF) / 2;
-        let hint_button_hint =
-            hint_button_hint.inset(Insets::new(vertical_inset, 0, vertical_inset, 0));
+        let (_, one_row_buttons) = area.split_bottom(theme::BUTTON_HEIGHT);
+        let grid = Grid::new(one_row_buttons, 1, 2).with_spacing(theme::BUTTON_SPACING);
+        let button_prev = grid.row_col(0, 0);
+        let button_next = grid.row_col(0, 1);
 
         Self {
             content_single_page,
             content,
             scrollbar,
-            buttons,
-            hint,
-            hint_button,
-            hint_button_hint,
+            controls,
+            button_prev,
+            button_next,
         }
     }
 
@@ -288,7 +380,7 @@ where
     pub fn new(content: T, background: Color) -> Self {
         let buttons = CancelHold::new(theme::button_confirm());
         Self {
-            inner: SwipePage::new(content, buttons, background),
+            inner: SwipePage::new(content, buttons, background).with_cancel_on_first_page(),
             loader: Loader::new(),
             pad: Pad::with_background(background),
         }
@@ -297,7 +389,7 @@ where
     pub fn with_danger(content: T, background: Color) -> Self {
         let buttons = CancelHold::new(theme::button_danger());
         Self {
-            inner: SwipePage::new(content, buttons, background),
+            inner: SwipePage::new(content, buttons, background).with_cancel_on_first_page(),
             loader: Loader::new(),
             pad: Pad::with_background(background),
         }
@@ -310,6 +402,20 @@ where
             loader: Loader::new(),
             pad: Pad::with_background(background),
         }
+    }
+
+    pub fn with_cancel_arrow(content: T, background: Color) -> Self {
+        let buttons = CancelHold::with_cancel_arrow();
+        Self {
+            inner: SwipePage::new(content, buttons, background),
+            loader: Loader::new(),
+            pad: Pad::with_background(background),
+        }
+    }
+
+    pub fn with_swipe_left(mut self) -> Self {
+        self.inner = self.inner.with_swipe_left();
+        self
     }
 }
 
@@ -335,6 +441,7 @@ where
                 return Some(PageMsg::Controls(CancelConfirmMsg::Cancelled))
             }
             Some(PageMsg::Controls(CancelHoldMsg::HoldButton(b))) => Some(b),
+            Some(PageMsg::Aux(a)) => return Some(PageMsg::Aux(a)),
             _ => None,
         };
         if handle_hold_event(
@@ -348,7 +455,7 @@ where
             return Some(PageMsg::Controls(CancelConfirmMsg::Confirmed));
         }
         if self.inner.pad.will_paint().is_some() {
-            self.inner.buttons.request_complete_repaint(ctx);
+            self.inner.controls.request_complete_repaint(ctx);
         }
         None
     }
@@ -365,9 +472,10 @@ where
             }
         }
         if self.inner.scrollbar.has_next_page() {
-            self.inner.hint.paint();
+            self.inner.button_prev.paint();
+            self.inner.button_next.paint();
         } else {
-            self.inner.buttons.paint();
+            self.inner.controls.paint();
         }
         if let Some(val) = self.inner.fade.take() {
             // Note that this is blocking and takes some time.
@@ -375,6 +483,7 @@ where
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.loader.bounds(sink);
         self.inner.bounds(sink);
@@ -393,11 +502,14 @@ where
 
 #[cfg(test)]
 mod tests {
+    use serde_json;
+
     use crate::{
-        trace::Trace,
+        strutil::SkipPrefix,
+        trace::tests::trace,
         ui::{
             component::{
-                text::paragraphs::{Paragraph, ParagraphStrType, Paragraphs},
+                text::paragraphs::{Paragraph, Paragraphs},
                 Empty,
             },
             event::TouchEvent,
@@ -410,16 +522,10 @@ mod tests {
 
     const SCREEN: Rect = constant::screen().inset(theme::borders());
 
-    impl ParagraphStrType for &'static str {
+    impl SkipPrefix for &str {
         fn skip_prefix(&self, chars: usize) -> Self {
             &self[chars..]
         }
-    }
-
-    fn trace(val: &impl Trace) -> String {
-        let mut t = Vec::new();
-        val.trace(&mut t);
-        String::from_utf8(t).unwrap()
     }
 
     fn swipe(component: &mut impl Component, points: &[(i16, i16)]) {
@@ -458,8 +564,18 @@ mod tests {
         );
         page.place(SCREEN);
 
-        let expected =
-            "<SwipePage active_page:0 page_count:1 content:<Paragraphs > buttons:<Empty > >";
+        let expected = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 0,
+            "page_count": 1,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [],
+            },
+            "controls": {
+                "component": "Empty",
+            },
+        });
 
         assert_eq!(trace(&page), expected);
         swipe_up(&mut page);
@@ -486,7 +602,21 @@ mod tests {
         );
         page.place(SCREEN);
 
-        let expected = "<SwipePage active_page:0 page_count:1 content:<Paragraphs This is the first paragraph\nand it should fit on the\nscreen entirely.\nSecond, bold, paragraph\nshould also fit on the\nscreen whole I think.\n> buttons:<Empty > >";
+        let expected = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 0,
+            "page_count": 1,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    ["This is the first", "\n", "paragraph and it should", "\n", "fit on the screen", "\n", "entirely."],
+                    ["Second, bold, paragraph", "\n", "should also fit on the", "\n", "screen whole I think."],
+                ],
+            },
+            "controls": {
+                "component": "Empty",
+            },
+        });
 
         assert_eq!(trace(&page), expected);
         swipe_up(&mut page);
@@ -509,18 +639,61 @@ mod tests {
         );
         page.place(SCREEN);
 
-        let expected1 = "<SwipePage active_page:0 page_count:2 content:<Paragraphs This is somewhat long\nparagraph that goes on\nand on and on and on\nand on and will definitely\nnot fit on just a single\nscreen. You have to\nswipe a bit to see all the\ntext it contains I...\n> buttons:<FixedHeightBar inner:<Button text:NO > > >";
-        let expected2 = "<SwipePage active_page:1 page_count:2 content:<Paragraphs guess. There's just so\nmuch letters in it.\n> buttons:<FixedHeightBar inner:<Button text:NO > > >";
+        let first_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 0,
+            "page_count": 2,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    [
+                        "This is somewhat long", "\n",
+                        "paragraph that goes on", "\n",
+                        "and on and on and on and", "\n",
+                        "on and will definitely not", "\n",
+                        "fit on just a single", "\n",
+                        "screen. You have to", "\n",
+                        "swipe a bit to see all the", "\n",
+                        "text it contains I guess.", "...",
+                    ],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Button",
+                    "text": "NO",
+                },
+            },
+        });
+        let second_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 1,
+            "page_count": 2,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    ["There's just so much", "\n", "letters in it."],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Button",
+                    "text": "NO",
+                },
+            },
+        });
 
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
         swipe_down(&mut page);
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected2);
+        assert_eq!(trace(&page), second_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected2);
+        assert_eq!(trace(&page), second_page);
         swipe_down(&mut page);
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
     }
 
     #[test]
@@ -545,25 +718,101 @@ mod tests {
         );
         page.place(SCREEN);
 
-        let expected1 = "<SwipePage active_page:0 page_count:3 content:<Paragraphs This paragraph is using a\nbold font. It doesn't\nneed to be all that long.\nAnd this one is\nusing MONO. Mono\nspace is nice fo\nr numbers,...\n> buttons:<FixedHeightBar inner:<Button text:IDK > > >";
-        let expected2 = "<SwipePage active_page:1 page_count:3 content:<Paragraphs ...they have th\ne same width and\ncan be scanned q\nuickly. Even if\nthey span severa\nl pages or somet\nhing.\n> buttons:<FixedHeightBar inner:<Button text:IDK > > >";
-        let expected3 = "<SwipePage active_page:2 page_count:3 content:<Paragraphs Let's add another one\nfor a good measure. This\none should overflow all\nthe way to the third\npage with a bit of luck.\n> buttons:<FixedHeightBar inner:<Button text:IDK > > >";
+        let first_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 0,
+            "page_count": 3,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    [
+                        "This paragraph is using a", "\n",
+                        "bold font. It doesn't need", "\n",
+                        "to be all that long.",
+                    ],
+                    [
+                        "And this one is u", "\n",
+                        "sing MONO. Monosp", "\n",
+                        "ace is nice for n", "\n",
+                        "umbers, they", "...",
+                    ],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Button",
+                    "text": "IDK",
+                },
+            },
+        });
+        let second_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 1,
+            "page_count": 3,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    [
+                        "...", "have the same", "\n",
+                        "width and can be", "\n",
+                        "scanned quickly.", "\n",
+                        "Even if they span", "\n",
+                        "several pages or", "\n",
+                        "something.",
+                    ],
+                    [
+                        "Let's add another one", "...",
+                    ],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Button",
+                    "text": "IDK",
+                },
+            },
+        });
+        let third_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 2,
+            "page_count": 3,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    [
+                        "for a good measure. This", "\n",
+                        "one should overflow all", "\n",
+                        "the way to the third page", "\n",
+                        "with a bit of luck.",
+                    ],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Button",
+                    "text": "IDK",
+                },
+            },
+        });
 
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
         swipe_down(&mut page);
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected2);
+        assert_eq!(trace(&page), second_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected3);
+        assert_eq!(trace(&page), third_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected3);
+        assert_eq!(trace(&page), third_page);
         swipe_down(&mut page);
-        assert_eq!(trace(&page), expected2);
+        assert_eq!(trace(&page), second_page);
         swipe_down(&mut page);
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
         swipe_down(&mut page);
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
     }
 
     #[test]
@@ -579,16 +828,70 @@ mod tests {
         );
         page.place(SCREEN);
 
-        let expected1 = "<SwipePage active_page:0 page_count:3 content:<Paragraphs Short one.\n> buttons:<FixedHeightBar inner:<Empty > > >";
-        let expected2 = "<SwipePage active_page:1 page_count:3 content:<Paragraphs Short two.\n> buttons:<FixedHeightBar inner:<Empty > > >";
-        let expected3 = "<SwipePage active_page:2 page_count:3 content:<Paragraphs Short three.\n> buttons:<FixedHeightBar inner:<Empty > > >";
+        let first_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 0,
+            "page_count": 3,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    [
+                        "Short one.",
+                    ],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Empty",
+                },
+            },
+        });
+        let second_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 1,
+            "page_count": 3,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    [
+                        "Short two.",
+                    ],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Empty",
+                },
+            },
+        });
+        let third_page = serde_json::json!({
+            "component": "SwipePage",
+            "active_page": 2,
+            "page_count": 3,
+            "content": {
+                "component": "Paragraphs",
+                "paragraphs": [
+                    [
+                        "Short three.",
+                    ],
+                ],
+            },
+            "controls": {
+                "component": "FixedHeightBar",
+                "inner": {
+                    "component": "Empty",
+                },
+            },
+        });
 
-        assert_eq!(trace(&page), expected1);
+        assert_eq!(trace(&page), first_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected2);
+        assert_eq!(trace(&page), second_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected3);
+        assert_eq!(trace(&page), third_page);
         swipe_up(&mut page);
-        assert_eq!(trace(&page), expected3);
+        assert_eq!(trace(&page), third_page);
     }
 }

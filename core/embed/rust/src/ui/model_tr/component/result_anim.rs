@@ -6,9 +6,10 @@ use crate::{
         display,
         display::toif::Icon,
         geometry::Rect,
-        model_tr::theme,
     },
 };
+
+use super::super::theme;
 
 pub enum ResultAnimMsg {
     FullyGrown,
@@ -141,10 +142,11 @@ impl Component for ResultAnim {
     }
 }
 
+// DEBUG-ONLY SECTION BELOW
+
 #[cfg(feature = "ui_debug")]
 impl crate::trace::Trace for ResultAnim {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("ResultAnim");
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("ResultAnim");
     }
 }

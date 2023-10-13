@@ -6,10 +6,12 @@ use crate::{
         display,
         display::{Color, Font},
         geometry::Rect,
+        util::animation_disabled,
     },
 };
 
-const MILLIS_PER_LETTER_M: u32 = 300;
+const ANIMATION_DURATION_MS: u32 = 2000;
+const PAUSE_DURATION_MS: u32 = 1000;
 
 enum State {
     Initial,
@@ -48,12 +50,21 @@ where
             font,
             fg,
             bg,
-            duration: Duration::from_millis(2000),
-            pause: Duration::from_millis(1000),
+            duration: Duration::from_millis(ANIMATION_DURATION_MS),
+            pause: Duration::from_millis(PAUSE_DURATION_MS),
         }
     }
 
+    pub fn set_text(&mut self, text: T) {
+        self.text = text;
+    }
+
     pub fn start(&mut self, ctx: &mut EventCtx, now: Instant) {
+        // Not starting if animations are disabled.
+        if animation_disabled() {
+            return;
+        }
+
         if let State::Initial = self.state {
             let text_width = self.font.text_width(self.text.as_ref());
             let max_offset = self.area.width() - text_width;
@@ -129,27 +140,16 @@ where
     type Msg = Never;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        let base_width = self.font.text_width("M");
-        let text_width = self.font.text_width(self.text.as_ref());
-        let area_width = bounds.width();
-
-        let shift_width = if area_width > text_width {
-            area_width - text_width
-        } else {
-            text_width - area_width
-        };
-
-        let mut duration = (MILLIS_PER_LETTER_M * shift_width as u32) / base_width as u32;
-        if duration < MILLIS_PER_LETTER_M {
-            duration = MILLIS_PER_LETTER_M;
-        }
-
-        self.duration = Duration::from_millis(duration);
         self.area = bounds;
         self.area
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
+        // Not doing anything if animations are disabled.
+        if animation_disabled() {
+            return None;
+        }
+
         let now = Instant::now();
 
         if let Event::Timer(token) = event {
@@ -218,7 +218,7 @@ where
             _ => {
                 let progress = self.progress(now);
                 if let Some(done) = progress {
-                    self.paint_anim(done as i16);
+                    self.paint_anim(done);
                 } else {
                     self.paint_anim(0);
                 }
@@ -232,9 +232,8 @@ impl<T> crate::trace::Trace for Marquee<T>
 where
     T: AsRef<str>,
 {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("Marquee");
-        d.field("text", &self.text.as_ref());
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Marquee");
+        t.string("text", self.text.as_ref());
     }
 }

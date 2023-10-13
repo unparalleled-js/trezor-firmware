@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from .. import buttons
+from .common import go_next
 
 if TYPE_CHECKING:
     from trezorlib.debuglink import DebugLink, LayoutContent
@@ -9,80 +10,145 @@ if TYPE_CHECKING:
 def enter_word(
     debug: "DebugLink", word: str, is_slip39: bool = False
 ) -> "LayoutContent":
-    typed_word = word[:4]
-    for coords in buttons.type_word(typed_word, is_slip39=is_slip39):
-        debug.click(coords)
+    if debug.model == "T":
+        typed_word = word[:4]
+        for coords in buttons.type_word(typed_word, is_slip39=is_slip39):
+            debug.click(coords)
 
-    # For BIP39 - double-click on CONFIRM WORD is needed in case the word
-    # is not already typed as a whole
-    if not is_slip39 and typed_word != word:
-        debug.click(buttons.CONFIRM_WORD)
-    return debug.click(buttons.CONFIRM_WORD, wait=True)
+        return debug.click(buttons.CONFIRM_WORD, wait=True)
+    elif debug.model == "Safe 3":
+        letter_index = 0
+        layout = debug.read_layout()
 
+        # Letter choices
+        while layout.find_values_by_key("letter_choices"):
+            letter = word[letter_index]
+            while not layout.get_middle_choice() == letter:
+                layout = debug.press_right(wait=True)
 
-def confirm_recovery(debug: "DebugLink", legacy_ui: bool = False) -> None:
-    layout = debug.wait_layout()
-    if legacy_ui:
-        layout.text.startswith("Recovery mode")
+            layout = debug.press_middle(wait=True)
+            letter_index += 1
+
+        # Word choices
+        while not layout.get_middle_choice() == word:
+            layout = debug.press_right(wait=True)
+
+        return debug.press_middle(wait=True)
     else:
-        assert layout.get_title().startswith("WALLET RECOVERY")
-    debug.click(buttons.OK, wait=True)
+        raise ValueError("Unknown model")
+
+
+def confirm_recovery(debug: "DebugLink") -> None:
+    layout = debug.wait_layout()
+    if debug.model == "T":
+        assert layout.title().startswith(("RECOVER WALLET", "BACKUP CHECK"))
+        debug.click(buttons.OK, wait=True)
+    elif debug.model == "Safe 3":
+        assert layout.title() == "RECOVER WALLET"
+        debug.press_right(wait=True)
+        debug.press_right()
 
 
 def select_number_of_words(
-    debug: "DebugLink", num_of_words: int = 20, legacy_ui: bool = False
+    debug: "DebugLink", num_of_words: int = 20, wait: bool = True
 ) -> None:
-    layout = debug.read_layout()
+    if wait:
+        debug.wait_layout()
+    if debug.model == "T":
+        assert "number of words" in debug.read_layout().text_content()
+        assert debug.read_layout().title() in (
+            "BACKUP CHECK",
+            "RECOVER WALLET",
+        )
 
-    # select number of words
-    assert "Select number of words" in layout.get_content()
-    layout = debug.click(buttons.OK, wait=True)
-    if legacy_ui:
-        assert layout.text == "WordSelector"
+        # click the number
+        word_option_offset = 6
+        word_options = (12, 18, 20, 24, 33)
+        index = word_option_offset + word_options.index(
+            num_of_words
+        )  # raises if num of words is invalid
+        coords = buttons.grid34(index % 3, index // 3)
+        layout = debug.click(coords, wait=True)
+    elif debug.model == "Safe 3":
+        assert "number of words" in debug.read_layout().text_content()
+        layout = debug.press_right(wait=True)
+
+        assert layout.title() == "NUMBER OF WORDS"
+
+        # navigate to the number and confirm it
+        word_options = (12, 18, 20, 24, 33)
+        index = word_options.index(num_of_words)
+        for _ in range(index):
+            debug.press_right(wait=True)
+        layout = debug.press_middle(wait=True)
     else:
-        # Two title options
-        assert layout.get_title() in ("SEED CHECK", "RECOVERY MODE")
+        raise ValueError("Unknown model")
 
-    # click the number
-    word_option_offset = 6
-    word_options = (12, 18, 20, 24, 33)
-    index = word_option_offset + word_options.index(
-        num_of_words
-    )  # raises if num of words is invalid
-    coords = buttons.grid34(index % 3, index // 3)
-    layout = debug.click(coords, wait=True)
-    assert "Enter any share" in layout.get_content()
+    if num_of_words in (20, 33):
+        assert "Enter any share" in layout.text_content()
+    else:
+        assert "Enter your backup" in layout.text_content()
 
 
 def enter_share(
-    debug: "DebugLink", share: str, legacy_ui: bool = False
+    debug: "DebugLink", share: str, is_first: bool = True
 ) -> "LayoutContent":
-    layout = debug.click(buttons.OK, wait=True)
+    if debug.model == "T":
+        layout = debug.click(buttons.OK, wait=True)
 
-    if legacy_ui:
-        assert layout.text == "Slip39Keyboard"
+        assert layout.main_component() == "MnemonicKeyboard"
+        for word in share.split(" "):
+            layout = enter_word(debug, word, is_slip39=True)
+
+        return layout
+    elif debug.model == "Safe 3":
+        assert "RECOVER WALLET" in debug.wait_layout().title()
+        layout = debug.press_right(wait=True)
+        if is_first:
+            # Word entering info
+            debug.press_right()
+            layout = debug.press_right(wait=True)
+        assert "MnemonicKeyboard" in layout.all_components()
+
+        for word in share.split(" "):
+            layout = enter_word(debug, word, is_slip39=True)
+
+        return layout
     else:
-        assert layout.text == "< MnemonicKeyboard >"
-
-    for word in share.split(" "):
-        layout = enter_word(debug, word, is_slip39=True)
-
-    return layout
+        raise ValueError("Unknown model")
 
 
 def enter_shares(debug: "DebugLink", shares: list[str]) -> None:
     layout = debug.read_layout()
     expected_text = "Enter any share"
-    remaining = len(shares)
-    for share in shares:
-        assert expected_text in layout.get_content()
-        layout = enter_share(debug, share)
-        remaining -= 1
-        expected_text = f"{remaining} more share"
+    for index, share in enumerate(shares):
+        assert expected_text in layout.text_content()
+        layout = enter_share(debug, share, is_first=index == 0)
+        expected_text = f"{index + 1} of {len(shares)} shares entered"
 
-    assert "You have successfully recovered your wallet" in layout.get_content()
+    assert "Wallet recovered successfully" in layout.text_content()
+
+
+def enter_seed(debug: "DebugLink", seed_words: list[str]) -> None:
+    assert "Enter" in debug.read_layout().text_content()
+    if debug.model == "T":
+        layout = debug.click(buttons.OK, wait=True)
+        assert layout.main_component() == "MnemonicKeyboard"
+    elif debug.model == "Safe 3":
+        layout = debug.press_right(wait=True)
+        assert "RECOVER WALLET" in layout.title()
+        debug.press_right()
+
+        layout = debug.press_right(wait=True)
+        assert "MnemonicKeyboard" in layout.all_components()
+
+    for word in seed_words:
+        layout = enter_word(debug, word, is_slip39=False)
+
+    assert "Wallet recovered successfully" in layout.text_content()  # type: ignore
 
 
 def finalize(debug: "DebugLink") -> None:
-    layout = debug.click(buttons.OK, wait=True)
-    assert layout.text.startswith("< Homescreen ")
+    layout = go_next(debug, wait=True)
+    assert layout is not None
+    assert layout.main_component() == "Homescreen"

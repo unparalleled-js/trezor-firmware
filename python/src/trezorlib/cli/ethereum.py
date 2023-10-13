@@ -17,26 +17,20 @@
 import json
 import re
 import sys
+import tarfile
 from decimal import Decimal
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    List,
-    NoReturn,
-    Optional,
-    Sequence,
-    TextIO,
-    Tuple,
-)
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, NoReturn, Optional, TextIO
 
 import click
 
-from .. import ethereum, tools
+from .. import _rlp, definitions, ethereum, tools
+from ..messages import EthereumDefinitions
 from . import with_client
 
 if TYPE_CHECKING:
     import web3
+
     from ..client import TrezorClient
 
 PATH_HELP = "BIP-32 path, e.g. m/44'/60'/0'/0/0"
@@ -158,10 +152,47 @@ def _erc20_contract(token_address: str, to_address: str, amount: int) -> str:
 
 def _format_access_list(
     access_list: List[ethereum.messages.EthereumAccessList],
-) -> List[Tuple[bytes, Sequence[bytes]]]:
+) -> "_rlp.RLPItem":
     return [
         (ethereum.decode_hex(item.address), item.storage_keys) for item in access_list
     ]
+
+
+def _hex_or_file(data: str) -> bytes:
+    path = Path(data)
+    if path.is_file():
+        return path.read_bytes()
+
+    if data.startswith("0x"):
+        data = data[2:]
+    try:
+        return bytes.fromhex(data)
+    except ValueError as e:
+        raise click.ClickException(f"Invalid hex or file path: {data}") from e
+
+
+class CliSource(definitions.Source):
+    network: Optional[bytes] = None
+    token: Optional[bytes] = None
+    delegate: definitions.Source = definitions.NullSource()
+
+    def get_network(self, chain_id: int) -> Optional[bytes]:
+        if self.network is not None:
+            return self.network
+        return self.delegate.get_network(chain_id)
+
+    def get_network_by_slip44(self, slip44: int) -> Optional[bytes]:
+        if self.network is not None:
+            return self.network
+        return self.delegate.get_network_by_slip44(slip44)
+
+    def get_token(self, chain_id: int, address: Any) -> Optional[bytes]:
+        if self.token is not None:
+            return self.token
+        return self.delegate.get_token(chain_id, address)
+
+
+DEFINITIONS_SOURCE = CliSource()
 
 
 #####################
@@ -170,18 +201,77 @@ def _format_access_list(
 
 
 @click.group(name="ethereum")
-def cli() -> None:
-    """Ethereum commands."""
+@click.option(
+    "-d", "--definitions", "defs", help="Source for Ethereum definition blobs."
+)
+@click.option(
+    "-a",
+    "--auto-definitions",
+    is_flag=True,
+    help="Automatically download required definitions from trezor.io",
+)
+@click.option("--network", help="Network definition blob.")
+@click.option("--token", help="Token definition blob.")
+def cli(
+    defs: Optional[str],
+    auto_definitions: Optional[bool],
+    network: Optional[str],
+    token: Optional[str],
+) -> None:
+    """Ethereum commands.
+
+    Most Ethereum commands now require the host to specify definition of a network
+    and possibly an ERC-20 token. These definitions can be automatically fetched
+    using the `-a` option.
+
+    You can also specify a custom definition source using the `-d` option. Allowable
+    values are:
+
+    \b
+    - HTTP or HTTPS URL
+    - path to local directory
+    - path to local tar archive
+    \b
+
+    For debugging purposes, it is possible to force use a specific network and token
+    definition by using the `--network` and `--token` options. These options accept
+    either a path to a file with a binary blob, or a hex-encoded string.
+    """
+    if auto_definitions:
+        if defs is not None:
+            raise click.ClickException(
+                "Cannot use --definitions and --auto-definitions at the same time."
+            )
+        DEFINITIONS_SOURCE.delegate = definitions.UrlSource()
+    elif defs is not None:
+        path = Path(defs)
+        if path.is_dir():
+            DEFINITIONS_SOURCE.delegate = definitions.FilesystemSource(path)
+        elif path.is_file() and tarfile.is_tarfile(path):
+            DEFINITIONS_SOURCE.delegate = definitions.TarSource(path)
+        elif defs.startswith("http"):
+            DEFINITIONS_SOURCE.delegate = definitions.UrlSource(defs)
+        else:
+            raise click.ClickException("Unrecognized --definitions value.")
+
+    if network is not None:
+        DEFINITIONS_SOURCE.network = _hex_or_file(network)
+    if token is not None:
+        DEFINITIONS_SOURCE.token = _hex_or_file(token)
 
 
 @cli.command()
 @click.option("-n", "--address", required=True, help=PATH_HELP)
 @click.option("-d", "--show-display", is_flag=True)
+@click.option("-C", "--chunkify", is_flag=True)
 @with_client
-def get_address(client: "TrezorClient", address: str, show_display: bool) -> str:
+def get_address(
+    client: "TrezorClient", address: str, show_display: bool, chunkify: bool
+) -> str:
     """Get Ethereum address in hex encoding."""
     address_n = tools.parse_path(address)
-    return ethereum.get_address(client, address_n, show_display)
+    network = ethereum.network_from_address_n(address_n, DEFINITIONS_SOURCE)
+    return ethereum.get_address(client, address_n, show_display, network, chunkify)
 
 
 @cli.command()
@@ -213,7 +303,7 @@ def get_public_node(client: "TrezorClient", address: str, show_display: bool) ->
     "-g", "--gas-limit", type=int, help="Gas limit (required for offline signing)"
 )
 @click.option(
-    "-t",
+    "-G",
     "--gas-price",
     help="Gas price (required for offline signing)",
     callback=_amount_to_int,
@@ -247,6 +337,7 @@ def get_public_node(client: "TrezorClient", address: str, show_display: bool) ->
     callback=_list_units,
     expose_value=False,
 )
+@click.option("-C", "--chunkify", is_flag=True)
 @click.argument("to_address")
 @click.argument("amount", callback=_amount_to_int)
 @with_client
@@ -267,6 +358,7 @@ def sign_tx(
     max_priority_fee: Optional[int],
     access_list: List[ethereum.messages.EthereumAccessList],
     eip2718_type: Optional[int],
+    chunkify: bool,
 ) -> str:
     """Sign (and optionally publish) Ethereum transaction.
 
@@ -284,11 +376,6 @@ def sign_tx(
     try to connect to an ethereum node and auto-fill these values. You can configure
     the connection with WEB3_PROVIDER_URI environment variable.
     """
-    try:
-        import rlp
-    except ImportError:
-        _print_eth_dependencies_and_die()
-
     is_eip1559 = eip2718_type == 2
     if (
         (not is_eip1559 and gas_price is None)
@@ -306,8 +393,11 @@ def sign_tx(
         click.echo("Can't send tokens and custom data at the same time")
         sys.exit(1)
 
+    encoded_network = DEFINITIONS_SOURCE.get_network(chain_id)
     address_n = tools.parse_path(address)
-    from_address = ethereum.get_address(client, address_n)
+    from_address = ethereum.get_address(
+        client, address_n, encoded_network=encoded_network
+    )
 
     if token:
         data = _erc20_contract(token, to_address, amount)
@@ -315,8 +405,14 @@ def sign_tx(
         amount = 0
 
     if data:
+        # use token definition regardless of whether the data is an ERC-20 transfer
+        # -- this might prove useful in the future
+        encoded_token = DEFINITIONS_SOURCE.get_token(chain_id, to_address)
         data_bytes = ethereum.decode_hex(data)
     else:
+        # force use provided token definition even if no data (that is what the user
+        # seems to want)
+        encoded_token = DEFINITIONS_SOURCE.token
         data_bytes = b""
 
     if gas_limit is None:
@@ -335,6 +431,11 @@ def sign_tx(
     assert gas_limit is not None
     assert nonce is not None
 
+    defs = EthereumDefinitions(
+        encoded_network=encoded_network,
+        encoded_token=encoded_token,
+    )
+
     if is_eip1559:
         assert max_gas_fee is not None
         assert max_priority_fee is not None
@@ -350,6 +451,8 @@ def sign_tx(
             max_gas_fee=max_gas_fee,
             max_priority_fee=max_priority_fee,
             access_list=access_list,
+            definitions=defs,
+            chunkify=chunkify,
         )
     else:
         if gas_price is None:
@@ -366,12 +469,12 @@ def sign_tx(
             value=amount,
             data=data_bytes,
             chain_id=chain_id,
+            definitions=defs,
+            chunkify=chunkify,
         )
 
     to = ethereum.decode_hex(to_address)
 
-    # NOTE: rlp.encode needs a list input to iterate through all its items,
-    # it does not work with a tuple
     if is_eip1559:
         transaction_items = [
             chain_id,
@@ -398,7 +501,7 @@ def sign_tx(
             data_bytes,
             *sig,
         ]
-    transaction = rlp.encode(transaction_items)
+    transaction = _rlp.encode(transaction_items)
 
     if eip2718_type is not None:
         eip2718_prefix = f"{eip2718_type:02x}"
@@ -420,7 +523,8 @@ def sign_tx(
 def sign_message(client: "TrezorClient", address: str, message: str) -> Dict[str, str]:
     """Sign message with Ethereum address."""
     address_n = tools.parse_path(address)
-    ret = ethereum.sign_message(client, address_n, message)
+    network = ethereum.network_from_address_n(address_n, DEFINITIONS_SOURCE)
+    ret = ethereum.sign_message(client, address_n, message, network)
     output = {
         "message": message,
         "address": ret.address,
@@ -448,9 +552,15 @@ def sign_typed_data(
     - recursive structs
     """
     address_n = tools.parse_path(address)
+    network = ethereum.network_from_address_n(address_n, DEFINITIONS_SOURCE)
+    defs = EthereumDefinitions(encoded_network=network)
     data = json.loads(file.read())
     ret = ethereum.sign_typed_data(
-        client, address_n, data, metamask_v4_compat=metamask_v4_compat
+        client,
+        address_n,
+        data,
+        metamask_v4_compat=metamask_v4_compat,
+        definitions=defs,
     )
     output = {
         "address": ret.address,
@@ -490,7 +600,10 @@ def sign_typed_data_hash(
     address_n = tools.parse_path(address)
     domain_hash = ethereum.decode_hex(domain_hash_hex)
     message_hash = ethereum.decode_hex(message_hash_hex) if message_hash_hex else None
-    ret = ethereum.sign_typed_data_hash(client, address_n, domain_hash, message_hash)
+    network = ethereum.network_from_address_n(address_n, DEFINITIONS_SOURCE)
+    ret = ethereum.sign_typed_data_hash(
+        client, address_n, domain_hash, message_hash, network
+    )
     output = {
         "domain_hash": domain_hash_hex,
         "message_hash": message_hash_hex,

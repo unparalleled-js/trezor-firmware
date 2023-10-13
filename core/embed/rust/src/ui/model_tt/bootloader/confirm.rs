@@ -1,16 +1,13 @@
 use crate::ui::{
-    component::{
-        text::paragraphs::{ParagraphVecShort, Paragraphs},
-        Child, Component, ComponentExt, Event, EventCtx, Label, Pad,
-    },
+    component::{Child, Component, ComponentExt, Event, EventCtx, Label, Pad},
     constant,
     constant::screen,
     display::{Color, Icon},
-    geometry::{Alignment, Insets, Offset, Point, Rect, TOP_CENTER},
+    geometry::{Alignment2D, Insets, Offset, Point, Rect},
     model_tt::{
         bootloader::theme::{
-            button_bld_menu, BUTTON_AREA_START, CLOSE, CONTENT_PADDING, CORNER_BUTTON_AREA,
-            INFO_SMALL, TEXT_TITLE, TITLE_AREA,
+            button_bld_menu, BUTTON_AREA_START, BUTTON_HEIGHT, CONTENT_PADDING, CORNER_BUTTON_AREA,
+            CORNER_BUTTON_TOUCH_EXPANSION, INFO32, TEXT_FINGERPRINT, TEXT_TITLE, TITLE_AREA, X32,
         },
         component::{Button, ButtonMsg::Clicked},
         constant::WIDTH,
@@ -18,74 +15,80 @@ use crate::ui::{
     },
 };
 
+const ICON_TOP: i16 = 17;
+const CONTENT_START: i16 = 72;
+
+const CONTENT_AREA: Rect = Rect::new(
+    Point::new(CONTENT_PADDING, CONTENT_START),
+    Point::new(WIDTH - CONTENT_PADDING, BUTTON_AREA_START - CONTENT_PADDING),
+);
+
 #[derive(Copy, Clone, ToPrimitive)]
 pub enum ConfirmMsg {
     Cancel = 1,
     Confirm = 2,
 }
 
+pub enum ConfirmTitle<'a> {
+    Text(Label<&'a str>),
+    Icon(Icon),
+}
+
+pub struct ConfirmInfo<'a> {
+    pub title: Child<Label<&'a str>>,
+    pub text: Child<Label<&'a str>>,
+    pub info_button: Child<Button<&'static str>>,
+    pub close_button: Child<Button<&'static str>>,
+}
+
 pub struct Confirm<'a> {
     bg: Pad,
     content_pad: Pad,
     bg_color: Color,
-    icon: Option<Icon>,
-    title: Option<Child<Label<&'static str>>>,
-    message: Child<Paragraphs<ParagraphVecShort<&'a str>>>,
-    left: Child<Button<&'static str>>,
-    right: Child<Button<&'static str>>,
-    info_button: Option<Button<&'static str>>,
-    close_button: Option<Button<&'static str>>,
-    info_title: Option<Child<Label<&'static str>>>,
-    info_text: Option<Paragraphs<ParagraphVecShort<&'a str>>>,
+    title: ConfirmTitle<'a>,
+    message: Child<Label<&'a str>>,
+    alert: Option<Child<Label<&'a str>>>,
+    left_button: Child<Button<&'static str>>,
+    right_button: Child<Button<&'static str>>,
+    info: Option<ConfirmInfo<'a>>,
     show_info: bool,
-
-    confirm_left: bool,
 }
 
 impl<'a> Confirm<'a> {
     pub fn new(
         bg_color: Color,
-        icon: Option<Icon>,
-        left: Button<&'static str>,
-        right: Button<&'static str>,
-        confirm_left: bool,
-        confirm: (Option<&'static str>, Paragraphs<ParagraphVecShort<&'a str>>),
-        info: Option<(&'static str, Paragraphs<ParagraphVecShort<&'a str>>)>,
+        left_button: Button<&'static str>,
+        right_button: Button<&'static str>,
+        title: ConfirmTitle<'a>,
+        message: Label<&'a str>,
+        alert: Option<Label<&'a str>>,
+        info: Option<(&'a str, &'a str)>,
     ) -> Self {
-        let mut instance = Self {
-            bg: Pad::with_background(bg_color),
+        Self {
+            bg: Pad::with_background(bg_color).with_clear(),
             content_pad: Pad::with_background(bg_color),
             bg_color,
-            icon,
-            message: Child::new(confirm.1),
-            left: Child::new(left),
-            right: Child::new(right),
-            close_button: None,
-            info_button: None,
-            info_title: None,
-            info_text: None,
-            confirm_left,
+            title,
+            message: Child::new(message.vertically_centered()),
+            alert: alert.map(|alert| Child::new(alert.vertically_centered())),
+            left_button: Child::new(left_button),
+            right_button: Child::new(right_button),
+            info: info.map(|(title, text)| ConfirmInfo {
+                title: Child::new(Label::left_aligned(title, TEXT_TITLE).vertically_centered()),
+                text: Child::new(Label::left_aligned(text, TEXT_FINGERPRINT).vertically_centered()),
+                info_button: Child::new(
+                    Button::with_icon(Icon::new(INFO32))
+                        .styled(button_bld_menu())
+                        .with_expanded_touch_area(Insets::uniform(CORNER_BUTTON_TOUCH_EXPANSION)),
+                ),
+                close_button: Child::new(
+                    Button::with_icon(Icon::new(X32))
+                        .styled(button_bld_menu())
+                        .with_expanded_touch_area(Insets::uniform(CORNER_BUTTON_TOUCH_EXPANSION)),
+                ),
+            }),
             show_info: false,
-            title: confirm
-                .0
-                .map(|title| Child::new(Label::new(title, Alignment::Start, TEXT_TITLE))),
-        };
-        if let Some((title, text)) = info {
-            instance.info_title = Some(Child::new(Label::new(title, Alignment::Start, TEXT_TITLE)));
-            instance.info_text = Some(text);
-            instance.info_button = Some(
-                Button::with_icon(Icon::new(INFO_SMALL))
-                    .styled(button_bld_menu())
-                    .with_expanded_touch_area(Insets::uniform(13)),
-            );
-            instance.close_button = Some(
-                Button::with_icon(Icon::new(CLOSE))
-                    .styled(button_bld_menu())
-                    .with_expanded_touch_area(Insets::uniform(13)),
-            );
         }
-        instance.bg.clear();
-        instance
     }
 }
 
@@ -98,65 +101,79 @@ impl<'a> Component for Confirm<'a> {
             Point::zero(),
             Point::new(WIDTH, BUTTON_AREA_START),
         ));
-        let icon_height = if let Some(icon) = self.icon {
-            icon.toif.height()
-        } else {
-            0
-        };
-        self.message.place(Rect::new(
-            Point::new(CONTENT_PADDING, 32 + icon_height),
-            Point::new(WIDTH - CONTENT_PADDING, BUTTON_AREA_START),
-        ));
 
-        let button_size = Offset::new(106, 38);
-        self.left.place(Rect::from_top_left_and_size(
+        let mut content_area = CONTENT_AREA;
+
+        match &mut self.title {
+            ConfirmTitle::Icon(_) => {
+                // XXX HACK: when icon is present (wipe device screen), we know the
+                // string is long and we need to go outside the content padding
+                content_area = content_area.inset(Insets::sides(-CONTENT_PADDING));
+            }
+            ConfirmTitle::Text(title) => {
+                title.place(TITLE_AREA);
+            }
+        };
+
+        if self.alert.is_some() {
+            let message_height = self.message.inner().text_height(content_area.width());
+            self.message.place(Rect::from_top_left_and_size(
+                content_area.top_left(),
+                Offset::new(content_area.width(), message_height),
+            ));
+
+            let (_, alert_bounds) = content_area.split_top(message_height);
+
+            self.alert.place(alert_bounds);
+        } else {
+            self.message.place(content_area);
+        }
+
+        let button_size = Offset::new((WIDTH - 3 * CONTENT_PADDING) / 2, BUTTON_HEIGHT);
+        self.left_button.place(Rect::from_top_left_and_size(
             Point::new(CONTENT_PADDING, BUTTON_AREA_START),
             button_size,
         ));
-        self.right.place(Rect::from_top_left_and_size(
-            Point::new(124, BUTTON_AREA_START),
+        self.right_button.place(Rect::from_top_left_and_size(
+            Point::new(2 * CONTENT_PADDING + button_size.x, BUTTON_AREA_START),
             button_size,
         ));
-        self.info_button.place(CORNER_BUTTON_AREA);
-        self.close_button.place(CORNER_BUTTON_AREA);
-        self.info_title.place(TITLE_AREA);
-        self.title.place(TITLE_AREA);
-        self.info_text.place(Rect::new(
-            Point::new(CONTENT_PADDING, TITLE_AREA.y1),
-            Point::new(WIDTH - CONTENT_PADDING, BUTTON_AREA_START),
-        ));
+
+        if let Some(info) = self.info.as_mut() {
+            info.info_button.place(CORNER_BUTTON_AREA);
+            info.close_button.place(CORNER_BUTTON_AREA);
+            info.title.place(TITLE_AREA);
+            info.text.place(Rect::new(
+                Point::new(CONTENT_PADDING, TITLE_AREA.y1),
+                Point::new(WIDTH - CONTENT_PADDING, BUTTON_AREA_START),
+            ));
+        }
         bounds
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
-        if self.show_info {
-            if let Some(Clicked) = self.close_button.event(ctx, event) {
-                self.show_info = false;
+        if let Some(info) = self.info.as_mut() {
+            if self.show_info {
+                if let Some(Clicked) = info.close_button.event(ctx, event) {
+                    self.show_info = false;
+                    self.content_pad.clear();
+                    self.message.request_complete_repaint(ctx);
+                    self.alert.request_complete_repaint(ctx);
+                    return None;
+                }
+            } else if let Some(Clicked) = info.info_button.event(ctx, event) {
+                self.show_info = true;
+                info.text.request_complete_repaint(ctx);
+                info.title.request_complete_repaint(ctx);
                 self.content_pad.clear();
-                self.title.request_complete_repaint(ctx);
-                self.message.request_complete_repaint(ctx);
                 return None;
             }
-        } else if let Some(Clicked) = self.info_button.event(ctx, event) {
-            self.show_info = true;
-            self.info_text.request_complete_repaint(ctx);
-            self.info_title.request_complete_repaint(ctx);
-            self.content_pad.clear();
-            return None;
         }
-        if let Some(Clicked) = self.left.event(ctx, event) {
-            return if self.confirm_left {
-                Some(Self::Msg::Confirm)
-            } else {
-                Some(Self::Msg::Cancel)
-            };
+        if let Some(Clicked) = self.left_button.event(ctx, event) {
+            return Some(Self::Msg::Cancel);
         };
-        if let Some(Clicked) = self.right.event(ctx, event) {
-            return if self.confirm_left {
-                Some(Self::Msg::Cancel)
-            } else {
-                Some(Self::Msg::Confirm)
-            };
+        if let Some(Clicked) = self.right_button.event(ctx, event) {
+            return Some(Self::Msg::Confirm);
         };
         None
     }
@@ -165,22 +182,31 @@ impl<'a> Component for Confirm<'a> {
         self.bg.paint();
         self.content_pad.paint();
 
-        if self.show_info {
-            self.close_button.paint();
-            self.info_title.paint();
-            self.info_text.paint();
-            self.left.paint();
-            self.right.paint();
-        } else {
-            self.info_button.paint();
-            self.title.paint();
-            self.message.paint();
-            self.left.paint();
-            self.right.paint();
-            if let Some(icon) = self.icon {
+        if let Some(info) = self.info.as_mut() {
+            if self.show_info {
+                info.close_button.paint();
+                info.title.paint();
+                info.text.paint();
+                self.left_button.paint();
+                self.right_button.paint();
+                // short-circuit before painting the main components
+                return;
+            } else {
+                info.info_button.paint();
+                // pass through to the rest of the paint
+            }
+        }
+
+        self.message.paint();
+        self.alert.paint();
+        self.left_button.paint();
+        self.right_button.paint();
+        match &mut self.title {
+            ConfirmTitle::Text(label) => label.paint(),
+            ConfirmTitle::Icon(icon) => {
                 icon.draw(
-                    Point::new(screen().center().x, 32),
-                    TOP_CENTER,
+                    Point::new(screen().center().x, ICON_TOP),
+                    Alignment2D::TOP_CENTER,
                     WHITE,
                     self.bg_color,
                 );
@@ -188,8 +214,9 @@ impl<'a> Component for Confirm<'a> {
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
-        self.left.bounds(sink);
-        self.right.bounds(sink);
+        self.left_button.bounds(sink);
+        self.right_button.bounds(sink);
     }
 }

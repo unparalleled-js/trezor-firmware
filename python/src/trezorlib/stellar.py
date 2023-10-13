@@ -21,8 +21,8 @@ from . import exceptions, messages
 from .tools import expect
 
 if TYPE_CHECKING:
-    from .protobuf import MessageType
     from .client import TrezorClient
+    from .protobuf import MessageType
     from .tools import Address
 
     StellarMessageType = Union[
@@ -52,22 +52,22 @@ try:
         CreatePassiveSellOffer,
         HashMemo,
         IdMemo,
+        ManageBuyOffer,
         ManageData,
         ManageSellOffer,
+        MuxedAccount,
+        Network,
         NoneMemo,
         Operation,
         PathPaymentStrictReceive,
         PathPaymentStrictSend,
         Payment,
+        Price,
         ReturnHashMemo,
         SetOptions,
         TextMemo,
         TransactionEnvelope,
         TrustLineEntryFlag,
-        Price,
-        Network,
-        ManageBuyOffer,
-        MuxedAccount,
     )
     from stellar_sdk.xdr.signer_key_type import SignerKeyType
 
@@ -324,10 +324,15 @@ def _read_asset(asset: "Asset") -> messages.StellarAsset:
 
 @expect(messages.StellarAddress, field="address", ret_type=str)
 def get_address(
-    client: "TrezorClient", address_n: "Address", show_display: bool = False
+    client: "TrezorClient",
+    address_n: "Address",
+    show_display: bool = False,
+    chunkify: bool = False,
 ) -> "MessageType":
     return client.call(
-        messages.StellarGetAddress(address_n=address_n, show_display=show_display)
+        messages.StellarGetAddress(
+            address_n=address_n, show_display=show_display, chunkify=chunkify
+        )
     )
 
 

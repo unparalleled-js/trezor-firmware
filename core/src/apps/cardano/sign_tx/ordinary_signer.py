@@ -34,7 +34,6 @@ class OrdinarySigner(Signer):
         # super() omitted intentionally
         is_network_id_verifiable = self._is_network_id_verifiable()
         await layout.confirm_tx(
-            self.ctx,
             msg.fee,
             msg.network_id,
             msg.protocol_magic,
@@ -76,11 +75,7 @@ class OrdinarySigner(Signer):
             raise ProcessError("Invalid witness request")
 
     async def _show_witness_request(self, witness_path: list[int]) -> None:
-        from ..helpers.paths import (
-            SCHEMA_PAYMENT,
-            SCHEMA_STAKING,
-            WITNESS_PATH_NAME,
-        )
+        from ..helpers.paths import SCHEMA_PAYMENT, SCHEMA_STAKING, WITNESS_PATH_NAME
 
         # super() omitted intentionally
         # We only allow payment, staking or minting paths.
@@ -92,10 +87,10 @@ class OrdinarySigner(Signer):
         is_minting = SCHEMA_MINT.match(witness_path)
 
         if is_minting:
-            await layout.confirm_witness_request(self.ctx, witness_path)
+            await layout.confirm_witness_request(witness_path)
         elif not is_payment and not is_staking:
             await self._fail_or_warn_path(witness_path, WITNESS_PATH_NAME)
         else:
             await self._show_if_showing_details(
-                layout.confirm_witness_request(self.ctx, witness_path)
+                layout.confirm_witness_request(witness_path)
             )

@@ -5,6 +5,7 @@ use core::{
 
 use crate::{
     error::Error,
+    maybe_trace::MaybeTrace,
     micropython::{
         buffer::StrBuffer,
         gc::Gc,
@@ -23,7 +24,7 @@ use crate::{
     },
 };
 
-#[cfg(feature = "buttons")]
+#[cfg(feature = "button")]
 use crate::ui::event::ButtonEvent;
 #[cfg(feature = "touch")]
 use crate::ui::event::TouchEvent;
@@ -34,24 +35,6 @@ use crate::ui::event::USBEvent;
 pub trait ComponentMsgObj: Component {
     fn msg_try_into_obj(&self, msg: Self::Msg) -> Result<Obj, Error>;
 }
-
-#[cfg(feature = "ui_debug")]
-mod maybe_trace {
-    pub trait MaybeTrace: crate::trace::Trace {}
-    impl<T> MaybeTrace for T where T: crate::trace::Trace {}
-}
-
-#[cfg(not(feature = "ui_debug"))]
-mod maybe_trace {
-    pub trait MaybeTrace {}
-    impl<T> MaybeTrace for T {}
-}
-
-/// Stand-in for the optionally-compiled trait `Trace`.
-/// If UI debugging is enabled, `MaybeTrace` implies `Trace` and is implemented
-/// for everything that implements Trace. If disabled, `MaybeTrace` is
-/// implemented for everything.
-use maybe_trace::MaybeTrace;
 
 /// Object-safe interface between trait `Component` and MicroPython world. It
 /// converts the result of `Component::event` into `Obj` via the
@@ -64,7 +47,7 @@ pub trait ObjComponent: MaybeTrace {
     fn obj_place(&mut self, bounds: Rect) -> Rect;
     fn obj_event(&mut self, ctx: &mut EventCtx, event: Event) -> Result<Obj, Error>;
     fn obj_paint(&mut self) -> bool;
-    fn obj_bounds(&self, sink: &mut dyn FnMut(Rect));
+    fn obj_bounds(&self, _sink: &mut dyn FnMut(Rect)) {}
     fn obj_skip_paint(&mut self) {}
 }
 
@@ -90,6 +73,7 @@ where
         will_paint
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn obj_bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.bounds(sink)
     }
@@ -212,55 +196,23 @@ impl LayoutObj {
     /// raises an exception.
     #[cfg(feature = "ui_debug")]
     fn obj_trace(&self, callback: Obj) {
-        use crate::trace::{Trace, Tracer};
+        use crate::trace::JsonTracer;
 
-        struct CallbackTracer(Obj);
+        let mut tracer = JsonTracer::new(|text: &str| {
+            unwrap!(callback.call_with_n_args(&[unwrap!(text.try_into())]));
+        });
 
-        impl Tracer for CallbackTracer {
-            fn int(&mut self, i: i64) {
-                self.0.call_with_n_args(&[i.try_into().unwrap()]).unwrap();
-            }
+        // For Reasons(tm), we must pass a closure in which we call `root.trace(t)`,
+        // instead of passing `root` into the tracer.
 
-            fn bytes(&mut self, b: &[u8]) {
-                self.0.call_with_n_args(&[b.try_into().unwrap()]).unwrap();
-            }
-
-            fn string(&mut self, s: &str) {
-                self.0.call_with_n_args(&[s.try_into().unwrap()]).unwrap();
-            }
-
-            fn symbol(&mut self, name: &str) {
-                self.0
-                    .call_with_n_args(&[
-                        "<".try_into().unwrap(),
-                        name.try_into().unwrap(),
-                        ">".try_into().unwrap(),
-                    ])
-                    .unwrap();
-            }
-
-            fn open(&mut self, name: &str) {
-                self.0
-                    .call_with_n_args(&["<".try_into().unwrap(), name.try_into().unwrap()])
-                    .unwrap();
-            }
-
-            fn field(&mut self, name: &str, value: &dyn Trace) {
-                self.0
-                    .call_with_n_args(&[name.try_into().unwrap(), ": ".try_into().unwrap()])
-                    .unwrap();
-                value.trace(self);
-            }
-
-            fn close(&mut self) {
-                self.0.call_with_n_args(&[">".try_into().unwrap()]).unwrap();
-            }
-        }
-
-        self.inner
-            .borrow()
-            .root
-            .trace(&mut CallbackTracer(callback));
+        // (The Reasons being, root is a `Gc<dyn ObjComponent>`, and `Gc` does not
+        // implement `Trace`, and `dyn ObjComponent` is unsized so we can't deref it to
+        // claim that it implements `Trace`, and we also can't upcast it to `&dyn Trace`
+        // because trait upcasting is unstable.
+        // Luckily, calling `root.trace()` works perfectly fine in spite of the above.)
+        tracer.root(&|t| {
+            self.inner.borrow().root.trace(t);
+        });
     }
 
     fn obj_page_count(&self) -> Obj {
@@ -399,7 +351,7 @@ extern "C" fn ui_layout_touch_event(_n_args: usize, _args: *const Obj) -> Obj {
     Obj::const_none()
 }
 
-#[cfg(feature = "buttons")]
+#[cfg(feature = "button")]
 extern "C" fn ui_layout_button_event(n_args: usize, args: *const Obj) -> Obj {
     let block = |args: &[Obj], _kwargs: &Map| {
         if args.len() != 3 {
@@ -413,7 +365,7 @@ extern "C" fn ui_layout_button_event(n_args: usize, args: *const Obj) -> Obj {
     unsafe { util::try_with_args_and_kwargs(n_args, args, &Map::EMPTY, block) }
 }
 
-#[cfg(not(feature = "buttons"))]
+#[cfg(not(feature = "button"))]
 extern "C" fn ui_layout_button_event(_n_args: usize, _args: *const Obj) -> Obj {
     Obj::const_none()
 }
@@ -509,7 +461,7 @@ extern "C" fn ui_layout_trace(_this: Obj, _callback: Obj) -> Obj {
     Obj::const_none()
 }
 
-#[cfg(feature = "ui_debug")]
+#[cfg(feature = "ui_bounds")]
 extern "C" fn ui_layout_bounds(this: Obj) -> Obj {
     let block = || {
         let this: Gc<LayoutObj> = this.try_into()?;
@@ -519,7 +471,7 @@ extern "C" fn ui_layout_bounds(this: Obj) -> Obj {
     unsafe { util::try_or_raise(block) }
 }
 
-#[cfg(not(feature = "ui_debug"))]
+#[cfg(not(feature = "ui_bounds"))]
 extern "C" fn ui_layout_bounds(_this: Obj) -> Obj {
     Obj::const_none()
 }

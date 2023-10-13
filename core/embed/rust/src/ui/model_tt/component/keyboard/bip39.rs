@@ -1,14 +1,13 @@
 use crate::{
     trezorhal::bip39,
     ui::{
-        component::{Component, Event, EventCtx},
+        component::{text::common::TextBox, Component, Event, EventCtx},
         display,
-        display::toif::Icon,
-        geometry::{Offset, Rect, CENTER},
+        geometry::{Alignment2D, Offset, Rect},
         model_tt::{
             component::{
                 keyboard::{
-                    common::{paint_pending_marker, MultiTapKeyboard, TextBox},
+                    common::{paint_pending_marker, MultiTapKeyboard},
                     mnemonic::{MnemonicInput, MnemonicInputMsg, MNEMONIC_KEY_COUNT},
                 },
                 Button, ButtonContent, ButtonMsg,
@@ -22,6 +21,8 @@ const MAX_LENGTH: usize = 8;
 
 pub struct Bip39Input {
     button: Button<&'static str>,
+    // used only to keep track of suggestion text color
+    button_suggestion: Button<&'static str>,
     textbox: TextBox<MAX_LENGTH>,
     multi_tap: MultiTapKeyboard,
     options_num: Option<usize>,
@@ -84,10 +85,12 @@ impl Component for Bip39Input {
     type Msg = MnemonicInputMsg;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        self.button.place(bounds)
+        self.button.place(bounds);
+        self.button_suggestion.place(bounds)
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: Event) -> Option<Self::Msg> {
+        self.button_suggestion.event(ctx, event);
         if self.multi_tap.is_timeout_event(event) {
             self.on_timeout(ctx)
         } else if let Some(ButtonMsg::Clicked) = self.button.event(ctx, event) {
@@ -110,7 +113,7 @@ impl Component for Bip39Input {
         // Content starts in the left-center point, offset by 16px to the right and 8px
         // to the bottom.
         let text_baseline = area.top_left().center(area.bottom_left()) + Offset::new(16, 8);
-        display::text(
+        display::text_left(
             text_baseline,
             text,
             style.font,
@@ -121,11 +124,12 @@ impl Component for Bip39Input {
         // Paint the rest of the suggested dictionary word.
         if let Some(word) = self.suggested_word.and_then(|w| w.get(text.len()..)) {
             let word_baseline = text_baseline + Offset::new(width, 0);
-            display::text(
+            let style = self.button_suggestion.style();
+            display::text_left(
                 word_baseline,
                 word,
                 style.font,
-                theme::GREY_LIGHT,
+                style.text_color,
                 style.button_color,
             );
         }
@@ -140,10 +144,16 @@ impl Component for Bip39Input {
             // Icon is painted in the right-center point, of expected size 16x16 pixels, and
             // 16px from the right edge.
             let icon_center = area.top_right().center(area.bottom_right()) - Offset::new(16 + 8, 0);
-            icon.draw(icon_center, CENTER, style.text_color, style.button_color);
+            icon.draw(
+                icon_center,
+                Alignment2D::CENTER,
+                style.text_color,
+                style.button_color,
+            );
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.button.bounds(sink);
     }
@@ -157,6 +167,7 @@ impl Bip39Input {
             multi_tap: MultiTapKeyboard::new(),
             options_num: None,
             suggested_word: None,
+            button_suggestion: Button::empty(),
         }
     }
 
@@ -215,21 +226,36 @@ impl Bip39Input {
             {
                 // Confirm button.
                 self.button.enable(ctx);
-                self.button.set_stylesheet(ctx, theme::button_confirm());
+                self.button.set_stylesheet(ctx, theme::button_pin_confirm());
                 self.button
-                    .set_content(ctx, ButtonContent::Icon(Icon::new(theme::ICON_CONFIRM)));
+                    .set_content(ctx, ButtonContent::Icon(theme::ICON_LIST_CHECK));
+                self.button_suggestion
+                    .set_stylesheet(ctx, theme::button_suggestion_confirm());
             } else {
                 // Auto-complete button.
                 self.button.enable(ctx);
-                self.button.set_stylesheet(ctx, theme::button_default());
                 self.button
-                    .set_content(ctx, ButtonContent::Icon(Icon::new(theme::ICON_CLICK)));
+                    .set_stylesheet(ctx, theme::button_pin_autocomplete());
+                self.button
+                    .set_content(ctx, ButtonContent::Icon(theme::ICON_CLICK));
+                self.button_suggestion
+                    .set_stylesheet(ctx, theme::button_suggestion_autocomplete());
             }
         } else {
             // Disabled button.
             self.button.disable(ctx);
-            self.button.set_stylesheet(ctx, theme::button_default());
+            self.button.set_stylesheet(ctx, theme::button_pin());
             self.button.set_content(ctx, ButtonContent::Text(""));
         }
+    }
+}
+
+// DEBUG-ONLY SECTION BELOW
+
+#[cfg(feature = "ui_debug")]
+impl crate::trace::Trace for Bip39Input {
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Bip39Input");
+        t.child("textbox", &self.textbox);
     }
 }

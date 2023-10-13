@@ -20,16 +20,16 @@ pub use base::{Child, Component, ComponentExt, Event, EventCtx, Never, TimerToke
 pub use border::Border;
 pub use empty::Empty;
 pub use label::Label;
-pub use map::Map;
+pub use map::MsgMap;
 pub use marquee::Marquee;
 pub use maybe::Maybe;
 pub use pad::Pad;
 pub use paginated::{AuxPageMsg, PageMsg, Paginate};
 pub use painter::Painter;
-pub use placed::{FixedHeightBar, Floating, GridPlaced, VSplit};
+pub use placed::{FixedHeightBar, Floating, GridPlaced, Split};
 pub use qr_code::Qr;
 pub use text::{
     formatted::FormattedText,
     layout::{LineBreaking, PageBreaking, TextLayout},
 };
-pub use timeout::{Timeout, TimeoutMsg};
+pub use timeout::Timeout;

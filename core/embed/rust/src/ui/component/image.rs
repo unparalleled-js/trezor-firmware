@@ -1,16 +1,19 @@
 use crate::{
-    trezorhal::display::{image, ToifFormat},
+    trezorhal::display::ToifFormat,
     ui::{
         component::{Component, Event, EventCtx, Never},
         display,
-        display::{toif::Toif, Color, Icon},
-        geometry::{Alignment2D, Offset, Point, Rect, CENTER},
+        display::{
+            toif::{image, Toif},
+            Color, Icon,
+        },
+        geometry::{Alignment2D, Offset, Point, Rect},
     },
 };
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Image {
-    pub toif: Toif,
+    pub toif: Toif<'static>,
     area: Rect,
 }
 
@@ -28,7 +31,7 @@ impl Image {
     /// `alignment` argument.
     pub fn draw(&self, baseline: Point, alignment: Alignment2D) {
         let r = Rect::snap(baseline, self.toif.size(), alignment);
-        image(r.x0, r.y0, r.width(), r.height(), self.toif.zdata());
+        image(self, r.center());
     }
 }
 
@@ -45,9 +48,10 @@ impl Component for Image {
     }
 
     fn paint(&mut self) {
-        self.draw(self.area.center(), CENTER);
+        self.draw(self.area.center(), Alignment2D::CENTER);
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(Rect::from_center_and_size(
             self.area.center(),
@@ -59,8 +63,7 @@ impl Component for Image {
 #[cfg(feature = "ui_debug")]
 impl crate::trace::Trace for Image {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("Image");
-        t.close();
+        t.component("Image");
     }
 }
 
@@ -107,9 +110,16 @@ impl Component for BlendedImage {
     type Msg = Never;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        self.bg_top_left = self.bg.toif.size().snap(bounds.center(), CENTER);
-
-        let ft_top_left = self.fg.toif.size().snap(bounds.center(), CENTER);
+        self.bg_top_left = self
+            .bg
+            .toif
+            .size()
+            .snap(bounds.center(), Alignment2D::CENTER);
+        let ft_top_left = self
+            .fg
+            .toif
+            .size()
+            .snap(bounds.center(), Alignment2D::CENTER);
         self.fg_offset = ft_top_left - self.bg_top_left;
 
         Rect::from_top_left_and_size(self.bg_top_left, self.bg.toif.size())
@@ -123,6 +133,7 @@ impl Component for BlendedImage {
         self.paint_image();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(Rect::from_top_left_and_size(
             self.bg_top_left,
@@ -134,7 +145,6 @@ impl Component for BlendedImage {
 #[cfg(feature = "ui_debug")]
 impl crate::trace::Trace for BlendedImage {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("BlendedImage");
-        t.close();
+        t.component("BlendedImage");
     }
 }

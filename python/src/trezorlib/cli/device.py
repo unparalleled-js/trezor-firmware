@@ -14,6 +14,7 @@
 # You should have received a copy of the License along with this library.
 # If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
 
+import secrets
 import sys
 from typing import TYPE_CHECKING, Optional, Sequence
 
@@ -24,8 +25,8 @@ from . import ChoiceType, with_client
 
 if TYPE_CHECKING:
     from ..client import TrezorClient
-    from . import TrezorConnection
     from ..protobuf import MessageType
+    from . import TrezorConnection
 
 RECOVERY_TYPE = {
     "scrambled": messages.RecoveryDeviceType.ScrambledWords,
@@ -293,6 +294,20 @@ def reboot_to_bootloader(obj: "TrezorConnection") -> str:
 
 
 @cli.command()
+@with_client
+def tutorial(client: "TrezorClient") -> str:
+    """Show on-device tutorial."""
+    return device.show_device_tutorial(client)
+
+
+@cli.command()
+@with_client
+def unlock_bootloader(client: "TrezorClient") -> str:
+    """Unlocks bootloader. Irreversible."""
+    return device.unlock_bootloader(client)
+
+
+@cli.command()
 @click.argument("enable", type=ChoiceType({"on": True, "off": False}), required=False)
 @click.option(
     "-e",
@@ -317,3 +332,19 @@ def set_busy(
         )
 
     return device.set_busy(client, expiry * 1000)
+
+
+@cli.command()
+@click.argument("hex_challenge", required=False)
+@with_client
+def authenticate(client: "TrezorClient", hex_challenge: Optional[str]) -> None:
+    """Get information to verify the authenticity of the device."""
+    if hex_challenge is None:
+        hex_challenge = secrets.token_hex(32)
+    click.echo(f"Challenge: {hex_challenge}")
+    challenge = bytes.fromhex(hex_challenge)
+    msg = device.authenticate(client, challenge)
+    click.echo(f"Signature of challenge: {msg.signature.hex()}")
+    click.echo(f"Device certificate: {msg.certificates[0].hex()}")
+    for cert in msg.certificates[1:]:
+        click.echo(f"CA certificate: {cert.hex()}")

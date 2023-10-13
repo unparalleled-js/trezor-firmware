@@ -37,7 +37,7 @@ FixturesType = t.NewType("FixturesType", "dict[str, dict[str, dict[str, str]]]")
 FIXTURES: FixturesType = FixturesType({})
 
 
-def get_fixtures() -> FixturesType:
+def get_current_fixtures() -> FixturesType:
     global FIXTURES
     if not FIXTURES and FIXTURES_FILE.exists():
         FIXTURES = FixturesType(json.loads(FIXTURES_FILE.read_text()))
@@ -60,7 +60,7 @@ def prepare_fixtures(
     missing_tests: set[TestCase] = set()
 
     # merge with previous fixtures
-    fixtures = deepcopy(get_fixtures())
+    fixtures = deepcopy(get_current_fixtures())
     for (model, group), new_content in grouped_tests.items():
         # for every model/group, update the data with the new content
         current_content = fixtures.setdefault(model, {}).setdefault(group, {})
@@ -77,15 +77,29 @@ def prepare_fixtures(
     return fixtures, missing_tests
 
 
-def write_fixtures(
+def write_fixtures_only_new_results(
+    results: t.Iterable[TestResult],
+    dest: Path,
+) -> None:
+    """Generate new results file with only the tests that were actually run."""
+    content: dict[str, dict[str, dict[str, str]]] = {}
+    for res in results:
+        model = content.setdefault(res.test.model, {})
+        group = model.setdefault(res.test.group, {})
+        group[res.test.fixtures_name] = res.actual_hash
+    dest.write_text(json.dumps(content, indent=0, sort_keys=True) + "\n")
+
+
+def write_fixtures_complete(
     results: t.Iterable[TestResult],
     remove_missing: bool = False,
     dest: Path = FIXTURES_FILE,
 ) -> None:
+    """Generate new fixtures.json file with all the results, updated for the latest run."""
     global FIXTURES
     content, _ = prepare_fixtures(results, remove_missing)
-    FIXTURES = FixturesType(content)
     dest.write_text(json.dumps(content, indent=0, sort_keys=True) + "\n")
+    FIXTURES = FixturesType({})  # reset the cache
 
 
 def _rename_records(screen_path: Path) -> None:
@@ -163,6 +177,20 @@ def _get_test_name_and_group(node_id: str) -> tuple[str, str]:
     return shortened_name, group_name
 
 
+def get_screen_path(test_name: str) -> Path | None:
+    path = SCREENS_DIR / test_name / "actual"
+    if path.exists():
+        return path
+    path = SCREENS_DIR / test_name / "recorded"
+    if path.exists():
+        print(
+            f"WARNING: no actual screens for {test_name}, recording may be outdated: {path}"
+        )
+        return path
+    print(f"WARNING: missing screens for {test_name}. Did the test run?")
+    return None
+
+
 def screens_diff(
     expected_hashes: list[str], actual_hashes: list[str]
 ) -> t.Iterator[tuple[str | None, str | None]]:
@@ -195,9 +223,13 @@ class TestCase:
 
     @classmethod
     def build(cls, client: Client, request: pytest.FixtureRequest) -> Self:
+        model = client.features.model
+        # FIXME
+        if model == "Safe 3":
+            model = "R"
         name, group = _get_test_name_and_group(request.node.nodeid)
         return cls(
-            model=f"T{client.features.model}",
+            model=f"T{model}",
             name=name,
             group=group,
         )
@@ -258,7 +290,7 @@ class TestResult:
     def __post_init__(self) -> None:
         if self.expected_hash is None:
             self.expected_hash = (
-                get_fixtures()
+                get_current_fixtures()
                 .get(self.test.model, {})
                 .get(self.test.group, {})
                 .get(self.test.fixtures_name)

@@ -46,7 +46,7 @@ FAKE_TXHASH_a63dbe = bytes.fromhex(
     "a63dbedd8cd284bf0d3c468e84b9b0eeb14c3a08824eab8f80e7723a299f30db"
 )
 
-pytestmark = pytest.mark.altcoin
+pytestmark = [pytest.mark.altcoin, pytest.mark.skip_tr]
 
 
 # All data taken from T1
@@ -71,16 +71,15 @@ def test_send_bitcoin_gold_change(client: Client):
         script_type=messages.OutputScriptType.PAYTOADDRESS,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 request_output(1),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_6f0398),
                 request_input(0, FAKE_TXHASH_6f0398),
@@ -126,16 +125,15 @@ def test_send_bitcoin_gold_nochange(client: Client):
         script_type=messages.OutputScriptType.PAYTOADDRESS,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_input(1),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_6f0398),
                 request_input(0, FAKE_TXHASH_6f0398),
@@ -197,7 +195,7 @@ def test_attack_change_input(client: Client):
         return msg
 
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_filter(messages.TxAck, attack_processor)
         client.set_expected_responses(
             [
@@ -205,9 +203,8 @@ def test_attack_change_input(client: Client):
                 request_output(0),
                 request_output(1),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_6f0398),
                 request_input(0, FAKE_TXHASH_6f0398),
@@ -260,16 +257,15 @@ def test_send_btg_multisig_change(client: Client):
         amount=1_252_382_934 - 24_000 - 1_000,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 request_output(1),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_a63dbe),
                 request_input(0, FAKE_TXHASH_a63dbe),
@@ -306,10 +302,9 @@ def test_send_btg_multisig_change(client: Client):
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 request_output(1),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_a63dbe),
                 request_input(0, FAKE_TXHASH_a63dbe),
@@ -356,18 +351,17 @@ def test_send_p2sh(client: Client):
         amount=1_252_382_934 - 11_000 - 12_300_000,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 request_output(1),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_db7239),
                 request_input(0, FAKE_TXHASH_db7239),
@@ -411,16 +405,15 @@ def test_send_p2sh_witness_change(client: Client):
         amount=1_252_382_934 - 11_000 - 12_300_000,
     )
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 request_output(1),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_db7239),
                 request_input(0, FAKE_TXHASH_db7239),
@@ -473,15 +466,14 @@ def test_send_multisig_1(client: Client):
     )
 
     with client:
-        tt = client.features.model == "T"
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_7f1f6b),
                 request_input(0, FAKE_TXHASH_7f1f6b),
@@ -503,9 +495,8 @@ def test_send_multisig_1(client: Client):
                 request_input(0),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                (tt, messages.ButtonRequest(code=B.ConfirmOutput)),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
-                (tt, messages.ButtonRequest(code=B.SignTx)),
                 request_input(0),
                 request_meta(FAKE_TXHASH_7f1f6b),
                 request_input(0, FAKE_TXHASH_7f1f6b),
@@ -593,13 +584,14 @@ def test_send_btg_external_presigned(client: Client):
         script_type=messages.OutputScriptType.PAYTOADDRESS,
     )
     with client:
+        is_core = client.features.model in ("T", "Safe 3")
         client.set_expected_responses(
             [
                 request_input(0),
                 request_input(1),
                 request_output(0),
                 messages.ButtonRequest(code=B.ConfirmOutput),
-                messages.ButtonRequest(code=B.ConfirmOutput),
+                (is_core, messages.ButtonRequest(code=B.ConfirmOutput)),
                 messages.ButtonRequest(code=B.SignTx),
                 request_input(0),
                 request_meta(FAKE_TXHASH_6f0398),

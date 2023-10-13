@@ -19,10 +19,9 @@ from ..keychain import address_n_to_name
 if TYPE_CHECKING:
     from typing import Any
 
+    from trezor.enums import AmountUnit
     from trezor.messages import TxAckPaymentRequest, TxOutput
     from trezor.ui.layouts import LayoutType
-    from trezor.enums import AmountUnit
-    from trezor.wire import Context
 
     from apps.common.coininfo import CoinInfo
     from apps.common.paths import Bip32Path
@@ -49,11 +48,25 @@ def format_coin_amount(amount: int, coin: CoinInfo, amount_unit: AmountUnit) -> 
     return f"{format_amount(amount, decimals)} {shortcut}"
 
 
+def account_label(coin: CoinInfo, address_n: Bip32Path | None) -> str:
+    return (
+        "Multiple accounts"
+        if address_n is None
+        else address_n_to_name(coin, list(address_n) + [0] * BIP32_WALLET_DEPTH)
+        or f"Path {address_n_to_str(address_n)}"
+    )
+
+
 async def confirm_output(
-    ctx: Context, output: TxOutput, coin: CoinInfo, amount_unit: AmountUnit
+    output: TxOutput,
+    coin: CoinInfo,
+    amount_unit: AmountUnit,
+    output_index: int,
+    chunkify: bool,
 ) -> None:
-    from . import omni
     from trezor.enums import OutputScriptType
+
+    from . import omni
 
     if output.script_type == OutputScriptType.PAYTOOPRETURN:
         data = output.op_return_data
@@ -61,16 +74,15 @@ async def confirm_output(
         if omni.is_valid(data):
             # OMNI transaction
             layout: LayoutType = confirm_metadata(
-                ctx,
                 "omni_transaction",
                 "OMNI transaction",
                 omni.parse(data),
+                verb="Confirm",
                 br_code=ButtonRequestType.ConfirmOutput,
             )
         else:
             # generic OP_RETURN
             layout = layouts.confirm_blob(
-                ctx,
                 "op_return",
                 "OP_RETURN",
                 data,
@@ -82,36 +94,45 @@ async def confirm_output(
         if output.payment_req_index is not None:
             title = "Confirm details"
         else:
-            title = "Confirm sending"
+            title = None
 
         address_label = None
         if output.address_n and not output.multisig:
+            from trezor import utils
+
+            # Showing the account string only for T2B1 model
+            show_account_str = utils.INTERNAL_MODEL == "T2B1"
             script_type = CHANGE_OUTPUT_TO_INPUT_SCRIPT_TYPES[output.script_type]
             address_label = (
-                address_n_to_name(coin, output.address_n, script_type)
+                address_n_to_name(
+                    coin,
+                    output.address_n,
+                    script_type,
+                    show_account_str=show_account_str,
+                )
                 or f"address path {address_n_to_str(output.address_n)}"
             )
 
         layout = layouts.confirm_output(
-            ctx,
             address_short,
             format_coin_amount(output.amount, coin, amount_unit),
             title=title,
             address_label=address_label,
+            output_index=output_index,
+            chunkify=chunkify,
         )
 
     await layout
 
 
 async def confirm_decred_sstx_submission(
-    ctx: Context, output: TxOutput, coin: CoinInfo, amount_unit: AmountUnit
+    output: TxOutput, coin: CoinInfo, amount_unit: AmountUnit
 ) -> None:
     assert output.address is not None
     address_short = addresses.address_short(coin, output.address)
     amount = format_coin_amount(output.amount, coin, amount_unit)
 
     await layouts.confirm_value(
-        ctx,
         "Purchase ticket",
         amount,
         "Ticket amount:",
@@ -121,7 +142,6 @@ async def confirm_decred_sstx_submission(
     )
 
     await layouts.confirm_value(
-        ctx,
         "Purchase ticket",
         address_short,
         "Voting rights to:",
@@ -132,14 +152,13 @@ async def confirm_decred_sstx_submission(
 
 
 async def confirm_payment_request(
-    ctx: Context,
     msg: TxAckPaymentRequest,
     coin: CoinInfo,
     amount_unit: AmountUnit,
 ) -> Any:
     from trezor import wire
 
-    memo_texts = []
+    memo_texts: list[str] = []
     for m in msg.memos:
         if m.text_memo is not None:
             memo_texts.append(m.text_memo.text)
@@ -153,25 +172,22 @@ async def confirm_payment_request(
     assert msg.amount is not None
 
     return await layouts.confirm_payment_request(
-        ctx,
         msg.recipient_name,
         format_coin_amount(msg.amount, coin, amount_unit),
         memo_texts,
     )
 
 
-async def confirm_replacement(ctx: Context, description: str, txid: bytes) -> None:
+async def confirm_replacement(title: str, txid: bytes) -> None:
     from ubinascii import hexlify
 
     await layouts.confirm_replacement(
-        ctx,
-        description,
+        title,
         hexlify(txid).decode(),
     )
 
 
 async def confirm_modify_output(
-    ctx: Context,
     txo: TxOutput,
     orig_txo: TxOutput,
     coin: CoinInfo,
@@ -181,7 +197,6 @@ async def confirm_modify_output(
     address_short = addresses.address_short(coin, txo.address)
     amount_change = txo.amount - orig_txo.amount
     await layouts.confirm_modify_output(
-        ctx,
         address_short,
         amount_change,
         format_coin_amount(abs(amount_change), coin, amount_unit),
@@ -190,7 +205,7 @@ async def confirm_modify_output(
 
 
 async def confirm_modify_fee(
-    ctx: Context,
+    title: str,
     user_fee_change: int,
     total_fee_new: int,
     fee_rate: float,
@@ -198,7 +213,7 @@ async def confirm_modify_fee(
     amount_unit: AmountUnit,
 ) -> None:
     await layouts.confirm_modify_fee(
-        ctx,
+        title,
         user_fee_change,
         format_coin_amount(abs(user_fee_change), coin, amount_unit),
         format_coin_amount(total_fee_new, coin, amount_unit),
@@ -207,21 +222,18 @@ async def confirm_modify_fee(
 
 
 async def confirm_joint_total(
-    ctx: Context,
     spending: int,
     total: int,
     coin: CoinInfo,
     amount_unit: AmountUnit,
 ) -> None:
     await layouts.confirm_joint_total(
-        ctx,
         spending_amount=format_coin_amount(spending, coin, amount_unit),
         total_amount=format_coin_amount(total, coin, amount_unit),
     )
 
 
 async def confirm_total(
-    ctx: Context,
     spending: int,
     fee: int,
     fee_rate: float,
@@ -230,79 +242,78 @@ async def confirm_total(
     address_n: Bip32Path | None,
 ) -> None:
 
-    account_label = (
-        "mixed accounts"
-        if address_n is None
-        else address_n_to_name(coin, list(address_n) + [0] * BIP32_WALLET_DEPTH)
-        or f"path {address_n_to_str(address_n)}"
-    )
     await layouts.confirm_total(
-        ctx,
         format_coin_amount(spending, coin, amount_unit),
         format_coin_amount(fee, coin, amount_unit),
         fee_rate_amount=format_fee_rate(fee_rate, coin) if fee_rate >= 0 else None,
-        account_label=account_label,
+        account_label=account_label(coin, address_n),
     )
 
 
 async def confirm_feeoverthreshold(
-    ctx: Context, fee: int, coin: CoinInfo, amount_unit: AmountUnit
+    fee: int, coin: CoinInfo, amount_unit: AmountUnit
 ) -> None:
     fee_amount = format_coin_amount(fee, coin, amount_unit)
-    await confirm_metadata(
-        ctx,
+    await layouts.show_warning(
         "fee_over_threshold",
-        "High fee",
-        "The fee of\n{}is unexpectedly high.",
+        "Unusually high fee.",
         fee_amount,
-        ButtonRequestType.FeeOverThreshold,
+        br_code=ButtonRequestType.FeeOverThreshold,
     )
 
 
-async def confirm_change_count_over_threshold(ctx: Context, change_count: int) -> None:
-    await confirm_metadata(
-        ctx,
+async def confirm_change_count_over_threshold(change_count: int) -> None:
+    await layouts.show_warning(
         "change_count_over_threshold",
-        "Warning",
-        "There are {}\nchange-outputs.\n",
-        str(change_count),
-        ButtonRequestType.SignTx,
-    )
-
-
-async def confirm_unverified_external_input(ctx: Context) -> None:
-    await confirm_metadata(
-        ctx,
-        "unverified_external_input",
-        "Warning",
-        "The transaction contains unverified external inputs.",
+        "A lot of change-outputs.",
+        f"{str(change_count)} outputs",
         br_code=ButtonRequestType.SignTx,
     )
 
 
-async def confirm_nondefault_locktime(
-    ctx: Context, lock_time: int, lock_time_disabled: bool
-) -> None:
+async def confirm_unverified_external_input() -> None:
+    await layouts.show_warning(
+        "unverified_external_input",
+        "The transaction contains unverified external inputs.",
+        "Continue anyway?",
+        button="Continue",
+        br_code=ButtonRequestType.SignTx,
+    )
+
+
+async def confirm_multiple_accounts() -> None:
+    await layouts.show_warning(
+        "sending_from_multiple_accounts",
+        "Sending from multiple accounts.",
+        "Continue anyway?",
+        button="Continue",
+        br_code=ButtonRequestType.SignTx,
+    )
+
+
+async def confirm_nondefault_locktime(lock_time: int, lock_time_disabled: bool) -> None:
     from trezor.strings import format_timestamp
 
     if lock_time_disabled:
-        title = "Warning"
-        text = "Locktime is set but will have no effect."
-        param: str | None = None
-    elif lock_time < _LOCKTIME_TIMESTAMP_MIN_VALUE:
-        title = "Confirm locktime"
-        text = "Locktime for this transaction is set to blockheight:\n{}"
-        param = str(lock_time)
+        await layouts.show_warning(
+            "nondefault_locktime",
+            "Locktime is set but will have no effect.",
+            "Continue anyway?",
+            button="Continue",
+            br_code=ButtonRequestType.SignTx,
+        )
     else:
-        title = "Confirm locktime"
-        text = "Locktime for this transaction is set to:\n{}"
-        param = format_timestamp(lock_time)
-
-    await confirm_metadata(
-        ctx,
-        "nondefault_locktime",
-        title,
-        text,
-        param,
-        br_code=ButtonRequestType.SignTx,
-    )
+        if lock_time < _LOCKTIME_TIMESTAMP_MIN_VALUE:
+            text = "Locktime set to blockheight:"
+            value = str(lock_time)
+        else:
+            text = "Locktime set to:"
+            value = format_timestamp(lock_time)
+        await layouts.confirm_value(
+            "Confirm locktime",
+            value,
+            text,
+            "nondefault_locktime",
+            br_code=ButtonRequestType.SignTx,
+            verb="Confirm",
+        )

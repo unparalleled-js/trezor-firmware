@@ -4,122 +4,138 @@ if not __debug__:
     halt("debug mode inactive")
 
 if __debug__:
-    from storage import debug as storage
+    from typing import TYPE_CHECKING
 
     import trezorui2
-
-    from trezor import log, loop, wire
-    from trezor.ui import display
+    from storage import debug as storage
+    from storage.debug import debug_events
+    from trezor import log, loop, utils, wire
     from trezor.enums import MessageType
-    from trezor.messages import (
-        DebugLinkLayout,
-        Success,
-    )
+    from trezor.messages import DebugLinkLayout, Success
+    from trezor.ui import display
+    from trezor.wire import context
 
     from apps import workflow_handlers
 
-    from typing import TYPE_CHECKING
-
     if TYPE_CHECKING:
-        from trezor.ui import Layout
         from trezor.messages import (
             DebugLinkDecision,
             DebugLinkEraseSdCard,
             DebugLinkGetState,
             DebugLinkRecordScreen,
             DebugLinkReseedRandom,
+            DebugLinkResetDebugEvents,
             DebugLinkState,
             DebugLinkWatchLayout,
         )
+        from trezor.ui import Layout
 
-    reset_current_words = loop.chan()
-    reset_word_index = loop.chan()
-
-    confirm_chan = loop.chan()
     swipe_chan = loop.chan()
-    input_chan = loop.chan()
-    confirm_signal = confirm_chan.take
+    result_chan = loop.chan()
+    button_chan = loop.chan()
+    click_chan = loop.chan()
     swipe_signal = swipe_chan.take
-    input_signal = input_chan.take
+    result_signal = result_chan.take
+    button_signal = button_chan.take
+    click_signal = click_chan.take
 
     debuglink_decision_chan = loop.chan()
 
     layout_change_chan = loop.chan()
 
-    DEBUG_CONTEXT: wire.Context | None = None
+    DEBUG_CONTEXT: context.Context | None = None
 
     LAYOUT_WATCHER_NONE = 0
     LAYOUT_WATCHER_STATE = 1
     LAYOUT_WATCHER_LAYOUT = 2
 
+    REFRESH_INDEX = 0
+
     def screenshot() -> bool:
         if storage.save_screen:
-            display.save(storage.save_screen_directory + "/refresh-")
+            # Starting with "refresh00", allowing for 100 emulator restarts
+            # without losing the order of the screenshots based on filename.
+            display.save(
+                storage.save_screen_directory + f"/refresh{REFRESH_INDEX:0>2}-"
+            )
             return True
         return False
 
-    def notify_layout_change(layout: Layout) -> None:
-        storage.current_content[:] = layout.read_content()
+    def notify_layout_change(layout: Layout, event_id: int | None = None) -> None:
+        layout.read_content_into(storage.current_content_tokens)
         if storage.watch_layout_changes or layout_change_chan.takers:
-            layout_change_chan.publish(storage.current_content)
+            payload = (event_id, storage.current_content_tokens)
+            layout_change_chan.publish(payload)
 
-    async def _dispatch_debuglink_decision(msg: DebugLinkDecision) -> None:
-        from trezor.enums import DebugButton, DebugSwipeDirection
-        from trezor.ui import (
-            Result,
-            SWIPE_UP,
-            SWIPE_DOWN,
-            SWIPE_LEFT,
-            SWIPE_RIGHT,
-        )
+    async def _dispatch_debuglink_decision(
+        event_id: int | None, msg: DebugLinkDecision
+    ) -> None:
+        from trezor.enums import DebugButton
 
-        button = msg.button  # local_cache_attribute
-        swipe = msg.swipe  # local_cache_attribute
-
-        if button is not None:
-            if button == DebugButton.NO:
-                await confirm_chan.put(Result(trezorui2.CANCELLED))
-            elif button == DebugButton.YES:
-                await confirm_chan.put(Result(trezorui2.CONFIRMED))
-            elif button == DebugButton.INFO:
-                await confirm_chan.put(Result(trezorui2.INFO))
-        if swipe is not None:
-            if swipe == DebugSwipeDirection.UP:
-                await swipe_chan.put(SWIPE_UP)
-            elif swipe == DebugSwipeDirection.DOWN:
-                await swipe_chan.put(SWIPE_DOWN)
-            elif swipe == DebugSwipeDirection.LEFT:
-                await swipe_chan.put(SWIPE_LEFT)
-            elif swipe == DebugSwipeDirection.RIGHT:
-                await swipe_chan.put(SWIPE_RIGHT)
-        if msg.input is not None:
-            await input_chan.put(Result(msg.input))
+        if msg.button is not None:
+            if msg.button == DebugButton.NO:
+                await result_chan.put((event_id, trezorui2.CANCELLED))
+            elif msg.button == DebugButton.YES:
+                await result_chan.put((event_id, trezorui2.CONFIRMED))
+            elif msg.button == DebugButton.INFO:
+                await result_chan.put((event_id, trezorui2.INFO))
+            else:
+                raise RuntimeError(f"Invalid msg.button - {msg.button}")
+        elif msg.input is not None:
+            await result_chan.put((event_id, msg.input))
+        elif msg.swipe is not None:
+            await swipe_chan.put((event_id, msg.swipe))
+        else:
+            # Sanity check. The message will be visible in terminal.
+            raise RuntimeError("Invalid DebugLinkDecision message")
 
     async def debuglink_decision_dispatcher() -> None:
         while True:
-            msg = await debuglink_decision_chan.take()
-            await _dispatch_debuglink_decision(msg)
+            event_id, msg = await debuglink_decision_chan.take()
+            await _dispatch_debuglink_decision(event_id, msg)
+
+    async def get_layout_change_content() -> list[str]:
+        awaited_event_id = debug_events.awaited_event
+        last_result_id = debug_events.last_result
+
+        if awaited_event_id is not None and awaited_event_id == last_result_id:
+            # We are awaiting the event that just happened - return current state
+            return storage.current_content_tokens
+
+        while True:
+            event_id, content = await layout_change_chan.take()
+            if awaited_event_id is None or event_id is None:
+                # Not waiting for anything or event does not have ID
+                break
+            elif event_id == awaited_event_id:
+                # We found what we were waiting for
+                debug_events.awaited_event = None
+                break
+            elif event_id > awaited_event_id:
+                # Sanity check
+                raise RuntimeError(
+                    f"Waiting for event that already happened - {event_id} > {awaited_event_id}"
+                )
+
+        if awaited_event_id is not None:
+            # Updating last result
+            debug_events.last_result = awaited_event_id
+
+        return content
 
     async def return_layout_change() -> None:
-        content = await layout_change_chan.take()
+        content_tokens = await get_layout_change_content()
+
         assert DEBUG_CONTEXT is not None
         if storage.layout_watcher is LAYOUT_WATCHER_LAYOUT:
-            await DEBUG_CONTEXT.write(DebugLinkLayout(lines=content))
+            await DEBUG_CONTEXT.write(DebugLinkLayout(tokens=content_tokens))
         else:
             from trezor.messages import DebugLinkState
 
-            await DEBUG_CONTEXT.write(DebugLinkState(layout_lines=content))
+            await DEBUG_CONTEXT.write(DebugLinkState(tokens=content_tokens))
         storage.layout_watcher = LAYOUT_WATCHER_NONE
 
-    async def touch_hold(x: int, y: int, duration_ms: int) -> None:
-        from trezor import io
-
-        await loop.sleep(duration_ms)
-        loop.synthetic_events.append((io.TOUCH, (io.TOUCH_END, x, y)))
-
-    async def dispatch_DebugLinkWatchLayout(
-        ctx: wire.Context, msg: DebugLinkWatchLayout
-    ) -> Success:
+    async def dispatch_DebugLinkWatchLayout(msg: DebugLinkWatchLayout) -> Success:
         from trezor import ui
 
         layout_change_chan.putters.clear()
@@ -129,35 +145,51 @@ if __debug__:
         log.debug(__name__, "Watch layout changes: %s", storage.watch_layout_changes)
         return Success()
 
-    async def dispatch_DebugLinkDecision(
-        ctx: wire.Context, msg: DebugLinkDecision
-    ) -> None:
-        from trezor import io
+    async def dispatch_DebugLinkResetDebugEvents(
+        msg: DebugLinkResetDebugEvents,
+    ) -> Success:
+        # Resetting the debug events makes sure that the previous
+        # events/layouts are not mixed with the new ones.
+        storage.reset_debug_events()
+        return Success()
+
+    async def dispatch_DebugLinkDecision(msg: DebugLinkDecision) -> None:
+        from trezor import workflow
+
+        workflow.idle_timer.touch()
 
         if debuglink_decision_chan.putters:
             log.warning(__name__, "DebugLinkDecision queue is not empty")
+
         x = msg.x  # local_cache_attribute
         y = msg.y  # local_cache_attribute
 
-        if x is not None and y is not None:
-            evt_down = io.TOUCH_START, x, y
-            evt_up = io.TOUCH_END, x, y
-            loop.synthetic_events.append((io.TOUCH, evt_down))
-            if msg.hold_ms is not None:
-                loop.schedule(touch_hold(x, y, msg.hold_ms))
-            else:
-                loop.synthetic_events.append((io.TOUCH, evt_up))
+        # Incrementing the counter for last events so we know what to await
+        debug_events.last_event += 1
+
+        # TT click on specific coordinates, with possible hold
+        if x is not None and y is not None and utils.INTERNAL_MODEL in ("T2T1", "D001"):
+            click_chan.publish((debug_events.last_event, x, y, msg.hold_ms))
+        # TR press specific button
+        elif msg.physical_button is not None and utils.INTERNAL_MODEL in ("T2B1",):
+            button_chan.publish(
+                (debug_events.last_event, msg.physical_button, msg.hold_ms)
+            )
         else:
-            debuglink_decision_chan.publish(msg)
+            # Will get picked up by _dispatch_debuglink_decision eventually
+            debuglink_decision_chan.publish((debug_events.last_event, msg))
 
         if msg.wait:
+            # We wait for all the previously sent events
+            debug_events.awaited_event = debug_events.last_event
             storage.layout_watcher = LAYOUT_WATCHER_LAYOUT
             loop.schedule(return_layout_change())
 
     async def dispatch_DebugLinkGetState(
-        ctx: wire.Context, msg: DebugLinkGetState
+        msg: DebugLinkGetState,
     ) -> DebugLinkState | None:
         from trezor.messages import DebugLinkState
+
         from apps.common import mnemonic, passphrase
 
         m = DebugLinkState()
@@ -170,21 +202,22 @@ if __debug__:
             if not storage.watch_layout_changes:
                 raise wire.ProcessError("Layout is not watched")
             storage.layout_watcher = LAYOUT_WATCHER_STATE
+            # We wait for the last previously sent event to finish
+            debug_events.awaited_event = debug_events.last_event
             loop.schedule(return_layout_change())
             return None
         else:
-            m.layout_lines = storage.current_content
+            m.tokens = storage.current_content_tokens
 
-        if msg.wait_word_pos:
-            m.reset_word_pos = await reset_word_index.take()
-        if msg.wait_word_list:
-            m.reset_word = " ".join(await reset_current_words.take())
         return m
 
-    async def dispatch_DebugLinkRecordScreen(
-        ctx: wire.Context, msg: DebugLinkRecordScreen
-    ) -> Success:
+    async def dispatch_DebugLinkRecordScreen(msg: DebugLinkRecordScreen) -> Success:
         if msg.target_directory:
+            # In case emulator is restarted but we still want to record screenshots
+            # into the same directory as before, we need to increment the refresh index,
+            # so that the screenshots are not overwritten.
+            global REFRESH_INDEX
+            REFRESH_INDEX = msg.refresh_index
             storage.save_screen_directory = msg.target_directory
             storage.save_screen = True
         else:
@@ -193,18 +226,14 @@ if __debug__:
 
         return Success()
 
-    async def dispatch_DebugLinkReseedRandom(
-        ctx: wire.Context, msg: DebugLinkReseedRandom
-    ) -> Success:
+    async def dispatch_DebugLinkReseedRandom(msg: DebugLinkReseedRandom) -> Success:
         if msg.value is not None:
             from trezor.crypto import random
 
             random.reseed(msg.value)
         return Success()
 
-    async def dispatch_DebugLinkEraseSdCard(
-        ctx: wire.Context, msg: DebugLinkEraseSdCard
-    ) -> Success:
+    async def dispatch_DebugLinkEraseSdCard(msg: DebugLinkEraseSdCard) -> Success:
         from trezor import io
 
         sdcard = io.sdcard  # local_cache_attribute
@@ -229,12 +258,15 @@ if __debug__:
     def boot() -> None:
         register = workflow_handlers.register  # local_cache_attribute
 
-        register(MessageType.DebugLinkDecision, dispatch_DebugLinkDecision)  # type: ignore [Argument of type "(ctx: Context, msg: DebugLinkDecision) -> Coroutine[Any, Any, None]" cannot be assigned to parameter "handler" of type "Handler[Msg@register]" in function "register"]
-        register(MessageType.DebugLinkGetState, dispatch_DebugLinkGetState)  # type: ignore [Argument of type "(ctx: Context, msg: DebugLinkGetState) -> Coroutine[Any, Any, DebugLinkState | None]" cannot be assigned to parameter "handler" of type "Handler[Msg@register]" in function "register"]
+        register(MessageType.DebugLinkDecision, dispatch_DebugLinkDecision)  # type: ignore [Argument of type "(msg: DebugLinkDecision) -> Coroutine[Any, Any, None]" cannot be assigned to parameter "handler" of type "Handler[Msg@register]" in function "register"]
+        register(MessageType.DebugLinkGetState, dispatch_DebugLinkGetState)  # type: ignore [Argument of type "(msg: DebugLinkGetState) -> Coroutine[Any, Any, DebugLinkState | None]" cannot be assigned to parameter "handler" of type "Handler[Msg@register]" in function "register"]
         register(MessageType.DebugLinkReseedRandom, dispatch_DebugLinkReseedRandom)
         register(MessageType.DebugLinkRecordScreen, dispatch_DebugLinkRecordScreen)
         register(MessageType.DebugLinkEraseSdCard, dispatch_DebugLinkEraseSdCard)
         register(MessageType.DebugLinkWatchLayout, dispatch_DebugLinkWatchLayout)
+        register(
+            MessageType.DebugLinkResetDebugEvents, dispatch_DebugLinkResetDebugEvents
+        )
 
         loop.schedule(debuglink_decision_dispatcher())
         if storage.layout_watcher is not LAYOUT_WATCHER_NONE:

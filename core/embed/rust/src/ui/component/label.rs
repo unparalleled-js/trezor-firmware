@@ -1,7 +1,7 @@
 use crate::ui::{
     component::{Component, Event, EventCtx, Never},
     display::Font,
-    geometry::{Alignment, Offset, Rect},
+    geometry::{Alignment, Insets, Offset, Point, Rect},
 };
 
 use super::{text::TextStyle, TextLayout};
@@ -9,6 +9,7 @@ use super::{text::TextStyle, TextLayout};
 pub struct Label<T> {
     text: T,
     layout: TextLayout,
+    vertical: Alignment,
 }
 
 impl<T> Label<T>
@@ -19,6 +20,7 @@ where
         Self {
             text,
             layout: TextLayout::new(style).with_align(align),
+            vertical: Alignment::Start,
         }
     }
 
@@ -32,6 +34,11 @@ where
 
     pub fn centered(text: T, style: TextStyle) -> Self {
         Self::new(text, Alignment::Center, style)
+    }
+
+    pub fn vertically_centered(mut self) -> Self {
+        self.vertical = Alignment::Center;
+        self
     }
 
     pub fn text(&self) -> &T {
@@ -50,9 +57,36 @@ where
         self.layout.bounds
     }
 
+    pub fn alignment(&self) -> Alignment {
+        self.layout.align
+    }
+
     pub fn max_size(&self) -> Offset {
         let font = self.font();
         Offset::new(font.text_width(self.text.as_ref()), font.text_max_height())
+    }
+
+    pub fn text_height(&self, width: i16) -> i16 {
+        let bounds = Rect::from_top_left_and_size(Point::zero(), Offset::new(width, i16::MAX));
+        self.layout
+            .with_bounds(bounds)
+            .fit_text(self.text.as_ref())
+            .height()
+    }
+
+    pub fn text_area(&self) -> Rect {
+        // XXX only works on single-line labels
+        assert!(self.layout.bounds.height() <= self.font().text_max_height());
+        let available_width = self.layout.bounds.width();
+        let width = self.font().text_width(self.text.as_ref());
+        let height = self.font().text_height();
+        let cursor = self.layout.initial_cursor();
+        let baseline = match self.alignment() {
+            Alignment::Start => cursor,
+            Alignment::Center => cursor + Offset::x(available_width / 2) - Offset::x(width / 2),
+            Alignment::End => cursor + Offset::x(available_width) - Offset::x(width),
+        };
+        Rect::from_bottom_left_and_size(baseline, Offset::new(width, height))
     }
 }
 
@@ -68,7 +102,13 @@ where
             .with_bounds(bounds)
             .fit_text(self.text.as_ref())
             .height();
-        self.layout = self.layout.with_bounds(bounds.with_height(height));
+        let diff = bounds.height() - height;
+        let insets = match self.vertical {
+            Alignment::Start => Insets::bottom(diff),
+            Alignment::Center => Insets::new(diff / 2, 0, diff / 2 + diff % 2, 0),
+            Alignment::End => Insets::top(diff),
+        };
+        self.layout.bounds = bounds.inset(insets);
         self.layout.bounds
     }
 
@@ -80,6 +120,7 @@ where
         self.layout.render_text(self.text.as_ref());
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.layout.bounds)
     }
@@ -91,6 +132,7 @@ where
     T: AsRef<str>,
 {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.string(self.text.as_ref())
+        t.component("Label");
+        t.string("text", self.text.as_ref());
     }
 }

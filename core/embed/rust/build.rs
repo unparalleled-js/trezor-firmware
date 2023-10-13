@@ -12,6 +12,13 @@ fn main() {
     link_core_objects();
 }
 
+fn mcu_type() -> String {
+    match env::var("MCU_TYPE") {
+        Ok(mcu) => mcu,
+        Err(_) => String::from("STM32F427xx"),
+    }
+}
+
 fn model() -> String {
     match env::var("TREZOR_MODEL") {
         Ok(model) => model,
@@ -21,7 +28,7 @@ fn model() -> String {
 
 fn board() -> String {
     if !is_firmware() {
-        return String::from("board-unix.h");
+        return String::from("boards/board-unix.h");
     }
 
     match env::var("TREZOR_BOARD") {
@@ -75,25 +82,31 @@ fn prepare_bindings() -> bindgen::Builder {
         "-I../../../storage",
         "-I../../vendor/micropython",
         "-I../../vendor/micropython/lib/uzlib",
-        "-I../extmod/modtrezorui", // for display.h
+        "-I../lib",
+        "-I../trezorhal",
+        "-I../models",
+        format!("-D{}", mcu_type()).as_str(),
         format!("-DTREZOR_MODEL_{}", model()).as_str(),
         format!("-DTREZOR_BOARD=\"{}\"", board()).as_str(),
     ]);
 
     // Pass in correct include paths and defines.
     if is_firmware() {
-        bindings = bindings.clang_args(&[
-            "-nostdinc",
-            "-I../firmware",
-            "-I../trezorhal",
-            "-I../../build/firmware",
-            "-I../../vendor/micropython/lib/stm32lib/STM32F4xx_HAL_Driver/Inc",
-            "-I../../vendor/micropython/lib/stm32lib/CMSIS/STM32F4xx/Include",
-            "-I../../vendor/micropython/lib/cmsis/inc",
-            "-DSTM32F427xx",
-            "-DUSE_HAL_DRIVER",
-            "-DSTM32_HAL_H=<stm32f4xx.h>",
-        ]);
+        let mut clang_args: Vec<&str> = Vec::new();
+
+        let includes = env::var("RUST_INCLUDES").unwrap();
+        let args = includes.split(';');
+
+        for arg in args {
+            clang_args.push(arg);
+        }
+        clang_args.push("-nostdinc");
+        clang_args.push("-I../firmware");
+        clang_args.push("-I../../build/firmware");
+        clang_args.push("-I../../vendor/micropython/lib/cmsis/inc");
+        clang_args.push("-DUSE_HAL_DRIVER");
+        bindings = bindings.clang_args(&clang_args);
+
         // Append gcc-arm-none-eabi's include paths.
         let cc_output = Command::new("arm-none-eabi-gcc")
             .arg("-E")
@@ -117,6 +130,7 @@ fn prepare_bindings() -> bindgen::Builder {
     } else {
         bindings = bindings.clang_args(&[
             "-I../unix",
+            "-I../trezorhal/unix",
             "-I../../build/unix",
             "-I../../vendor/micropython/ports/unix",
             "-DTREZOR_EMULATOR",
@@ -160,13 +174,11 @@ fn generate_micropython_bindings() {
         .allowlist_function("mp_obj_is_true")
         .allowlist_function("mp_call_function_n_kw")
         .allowlist_function("trezor_obj_get_ll_checked")
-        .allowlist_function("trezor_obj_get_ull_checked")
         .allowlist_function("trezor_obj_str_from_rom_text")
         // buffer
         .allowlist_function("mp_get_buffer")
         .allowlist_var("MP_BUFFER_READ")
         .allowlist_var("MP_BUFFER_WRITE")
-        .allowlist_var("MP_BUFFER_RW")
         .allowlist_var("mp_type_str")
         .allowlist_var("mp_type_bytes")
         .allowlist_var("mp_type_bytearray")
@@ -174,7 +186,6 @@ fn generate_micropython_bindings() {
         // dict
         .allowlist_type("mp_obj_dict_t")
         .allowlist_function("mp_obj_new_dict")
-        .allowlist_function("mp_obj_dict_store")
         .allowlist_var("mp_type_dict")
         // fun
         .allowlist_type("mp_obj_fun_builtin_fixed_t")
@@ -199,7 +210,6 @@ fn generate_micropython_bindings() {
         .allowlist_var("mp_type_list")
         // map
         .allowlist_type("mp_map_elem_t")
-        .allowlist_type("mp_map_lookup_kind_t")
         .allowlist_function("mp_map_init")
         .allowlist_function("mp_map_init_fixed_table")
         .allowlist_function("mp_map_lookup")
@@ -226,6 +236,8 @@ fn generate_micropython_bindings() {
         // module
         .allowlist_type("mp_obj_module_t")
         .allowlist_var("mp_type_module")
+        // qstr
+        .allowlist_function("qstr_data")
         // `ffi::mp_map_t` type is not allowed to be `Clone` or `Copy` because we tie it
         // to the data lifetimes with the `MapRef` type, see `src/micropython/map.rs`.
         // TODO: We should disable `Clone` and `Copy` for all types and only allow-list
@@ -248,6 +260,9 @@ fn generate_trezorhal_bindings() {
 
     let bindings = prepare_bindings()
         .header("trezorhal.h")
+        // model
+        .allowlist_var("MODEL_INTERNAL_NAME")
+        .allowlist_var("MODEL_FULL_NAME")
         // common
         .allowlist_var("HW_ENTROPY_DATA")
         // secbool
@@ -259,10 +274,6 @@ fn generate_trezorhal_bindings() {
         .allowlist_function("flash_init")
         // storage
         .allowlist_var("EXTERNAL_SALT_SIZE")
-        .allowlist_var("FLAG_PUBLIC")
-        .allowlist_var("FLAGS_WRITE")
-        .allowlist_var("MAX_APPID")
-        .allowlist_type("PIN_UI_WAIT_CALLBACK")
         .allowlist_function("storage_init")
         .allowlist_function("storage_wipe")
         .allowlist_function("storage_is_unlocked")
@@ -279,24 +290,25 @@ fn generate_trezorhal_bindings() {
         .allowlist_function("storage_set_counter")
         .allowlist_function("storage_next_counter")
         // display
-        .allowlist_function("display_init")
         .allowlist_function("display_offset")
         .allowlist_function("display_refresh")
         .allowlist_function("display_backlight")
         .allowlist_function("display_text")
         .allowlist_function("display_text_render_buffer")
         .allowlist_function("display_text_width")
-        .allowlist_function("display_bar")
-        .allowlist_function("display_bar_radius")
-        .allowlist_function("display_bar_radius_buffer")
-        .allowlist_function("display_image")
-        .allowlist_function("display_loader")
         .allowlist_function("display_pixeldata")
         .allowlist_function("display_pixeldata_dirty")
         .allowlist_function("display_set_window")
         .allowlist_function("display_sync")
-        .allowlist_var("DISPLAY_CMD_ADDRESS")
+        .allowlist_function("display_get_fb_addr")
+        .allowlist_function("display_get_wr_addr")
         .allowlist_var("DISPLAY_DATA_ADDRESS")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_WIDTH")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_HEIGHT")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_OFFSET_X")
+        .allowlist_var("DISPLAY_FRAMEBUFFER_OFFSET_Y")
+        .allowlist_var("DISPLAY_RESX")
+        .allowlist_var("DISPLAY_RESY")
         .allowlist_type("toif_format_t")
         // fonts
         .allowlist_function("font_height")
@@ -313,6 +325,8 @@ fn generate_trezorhal_bindings() {
         // slip39
         .allowlist_function("slip39_word_completion_mask")
         .allowlist_function("button_sequence_to_word")
+        .allowlist_var("SLIP39_WORDLIST")
+        .allowlist_var("SLIP39_WORD_COUNT")
         // random
         .allowlist_function("random_uniform")
         // rgb led
@@ -321,31 +335,42 @@ fn generate_trezorhal_bindings() {
         .allowlist_function("hal_delay")
         .allowlist_function("hal_ticks_ms")
         // dma2d
+        .allowlist_function("dma2d_setup_const")
         .allowlist_function("dma2d_setup_4bpp")
+        .allowlist_function("dma2d_setup_16bpp")
         .allowlist_function("dma2d_setup_4bpp_over_4bpp")
         .allowlist_function("dma2d_setup_4bpp_over_16bpp")
         .allowlist_function("dma2d_start")
         .allowlist_function("dma2d_start_blend")
+        .allowlist_function("dma2d_start_const")
+        .allowlist_function("dma2d_start_const_multiline")
         .allowlist_function("dma2d_wait_for_transfer")
         //buffers
-        .allowlist_function("buffers_get_line_buffer_16bpp")
-        .allowlist_function("buffers_get_line_buffer_4bpp")
-        .allowlist_function("buffers_get_text_buffer")
-        .allowlist_function("buffers_get_jpeg_buffer")
-        .allowlist_function("buffers_get_jpeg_work_buffer")
-        .allowlist_function("buffers_get_blurring_buffer")
-        .allowlist_var("text_buffer_height")
-        .allowlist_var("buffer_width")
+        .allowlist_function("buffers_get_line_16bpp")
+        .allowlist_function("buffers_free_line_16bpp")
+        .allowlist_function("buffers_get_line_4bpp")
+        .allowlist_function("buffers_free_line_4bpp")
+        .allowlist_function("buffers_get_text")
+        .allowlist_function("buffers_free_text")
+        .allowlist_function("buffers_get_jpeg")
+        .allowlist_function("buffers_free_jpeg")
+        .allowlist_function("buffers_get_jpeg_work")
+        .allowlist_function("buffers_free_jpeg_work")
+        .allowlist_function("buffers_get_blurring")
+        .allowlist_function("buffers_free_blurring")
+        .allowlist_var("TEXT_BUFFER_HEIGHT")
+        .no_copy("buffer_line_16bpp_t")
+        .no_copy("buffer_line_4bpp_t")
+        .no_copy("buffer_text_t")
+        .no_copy("buffer_jpeg_t")
+        .no_copy("buffer_jpeg_work_t")
+        .no_copy("buffer_blurring_t")
         //usb
         .allowlist_function("usb_configured")
         // touch
         .allowlist_function("touch_read")
         // button
-        .allowlist_function("button_read")
-        .allowlist_var("BTN_EVT_DOWN")
-        .allowlist_var("BTN_EVT_UP")
-        .allowlist_var("BTN_RIGHT")
-        .allowlist_var("BTN_LEFT");
+        .allowlist_function("button_read");
 
     // Write the bindings to a file in the OUR_DIR.
     bindings

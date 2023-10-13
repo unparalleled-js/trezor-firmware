@@ -12,17 +12,10 @@ display = Display()
 # re-export constants from modtrezorui
 NORMAL: int = Display.FONT_NORMAL
 BOLD: int = Display.FONT_BOLD
+DEMIBOLD: int = Display.FONT_DEMIBOLD
 MONO: int = Display.FONT_MONO
 WIDTH: int = Display.WIDTH
 HEIGHT: int = Display.HEIGHT
-
-if __debug__:
-    # common symbols to transfer swipes between debuglink and the UI
-    SWIPE_UP = const(0x01)
-    SWIPE_DOWN = const(0x02)
-    SWIPE_LEFT = const(0x04)
-    SWIPE_RIGHT = const(0x08)
-
 
 # channel used to cancel layouts, see `Cancelled` exception
 layout_chan = loop.chan()
@@ -46,7 +39,7 @@ else:
 
 
 # in both debug and production, emulator needs to draw the screen explicitly
-if utils.EMULATOR or utils.MODEL in ("1", "R"):
+if utils.EMULATOR or utils.INTERNAL_MODEL in ("T1B1", "T2B1"):
     loop.after_step_hook = refresh
 
 
@@ -73,29 +66,31 @@ async def _alert(count: int) -> None:
 
 
 def alert(count: int = 3) -> None:
-    global _alert_in_progress
-    if _alert_in_progress:
-        return
+    if utils.USE_BACKLIGHT:
+        global _alert_in_progress
+        if _alert_in_progress:
+            return
 
-    _alert_in_progress = True
-    loop.schedule(_alert(count))
+        _alert_in_progress = True
+        loop.schedule(_alert(count))
 
 
 def backlight_fade(val: int, delay: int = 14000, step: int = 15) -> None:
-    if __debug__:
-        if utils.DISABLE_ANIMATION:
+    if utils.USE_BACKLIGHT:
+        if __debug__:
+            if utils.DISABLE_ANIMATION:
+                display.backlight(val)
+                return
+        current = display.backlight()
+        if current < 0:
             display.backlight(val)
             return
-    current = display.backlight()
-    if current < 0:
+        elif current > val:
+            step = -step
+        for i in range(current, val, step):
+            display.backlight(i)
+            utime.sleep_us(delay)
         display.backlight(val)
-        return
-    elif current > val:
-        step = -step
-    for i in range(current, val, step):
-        display.backlight(i)
-        utime.sleep_us(delay)
-    display.backlight(val)
 
 
 # Component events.  Should be different from `io.TOUCH_*` events.
@@ -125,7 +120,7 @@ class Component:
     def __init__(self) -> None:
         self.repaint = True
 
-    if utils.MODEL in ("T",):
+    if utils.INTERNAL_MODEL in ("T2T1", "D001"):
 
         def dispatch(self, event: int, x: int, y: int) -> None:
             if event is RENDER:
@@ -148,7 +143,7 @@ class Component:
         def on_touch_end(self, x: int, y: int) -> None:
             pass
 
-    elif utils.MODEL in ("1", "R"):
+    elif utils.INTERNAL_MODEL in ("T1B1", "T2B1"):
 
         def dispatch(self, event: int, x: int, y: int) -> None:
             if event is RENDER:
@@ -171,8 +166,9 @@ class Component:
 
     if __debug__:
 
-        def read_content(self) -> list[str]:
-            return [self.__class__.__name__]
+        def read_content_into(self, content_store: list[str]) -> None:
+            content_store.clear()
+            content_store.append(self.__class__.__name__)
 
 
 class Result(Exception):
@@ -259,7 +255,7 @@ class Layout(Component):
         Usually overridden to add another tasks to the list."""
         return self.handle_input(), self.handle_rendering()
 
-    if utils.MODEL in ("T",):
+    if utils.INTERNAL_MODEL in ("T2T1", "D001"):
 
         def handle_input(self) -> Generator:
             """Task that is waiting for the user input."""
@@ -273,7 +269,7 @@ class Layout(Component):
                 # way to get the lowest input-to-render latency.
                 self.dispatch(RENDER, 0, 0)
 
-    elif utils.MODEL in ("1", "R"):
+    elif utils.INTERNAL_MODEL in ("T1B1", "T2B1"):
 
         def handle_input(self) -> Generator:
             """Task that is waiting for the user input."""

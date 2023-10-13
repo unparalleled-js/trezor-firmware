@@ -23,9 +23,9 @@ from construct_classes import Struct, subcon
 
 from .. import cosi
 from ..toif import ToifStruct
-from ..tools import TupleAdapter
+from ..tools import EnumAdapter, TupleAdapter
 from . import util
-from .models import TREZOR_T, TREZOR_T_DEV
+from .models import Model
 
 __all__ = [
     "VendorTrust",
@@ -47,6 +47,7 @@ def _transform_vendor_trust(data: bytes) -> bytes:
 
 
 class VendorTrust(Struct):
+    allow_run_with_secret: bool
     show_vendor_string: bool
     require_user_click: bool
     red_background: bool
@@ -56,7 +57,8 @@ class VendorTrust(Struct):
 
     SUBCON = c.Transformed(
         c.BitStruct(
-            "_reserved" / c.Default(c.BitsInteger(9), 0),
+            "_reserved" / c.Default(c.BitsInteger(8), 0),
+            "allow_run_with_secret" / c.Flag,
             "show_vendor_string" / c.Flag,
             "require_user_click" / c.Flag,
             "red_background" / c.Flag,
@@ -75,6 +77,7 @@ class VendorHeader(Struct):
     version: t.Tuple[int, int]
     sig_m: int
     # sig_n: int
+    hw_model: t.Union[Model, bytes]
     pubkeys: t.List[bytes]
     text: str
     image: t.Dict[str, t.Any]
@@ -93,7 +96,8 @@ class VendorHeader(Struct):
         "sig_m" / c.Int8ul,
         "sig_n" / c.Rebuild(c.Int8ul, c.len_(c.this.pubkeys)),
         "trust" / VendorTrust.SUBCON,
-        "_reserved" / c.Padding(14),
+        "hw_model" / EnumAdapter(c.Bytes(4), Model),
+        "_reserved" / c.Padding(10),
         "pubkeys" / c.Bytes(32)[c.this.sig_n],
         "text" / c.Aligned(4, c.PascalString(c.Int8ul, "utf-8")),
         "image" / ToifStruct,
@@ -128,17 +132,13 @@ class VendorHeader(Struct):
 
     def verify(self, dev_keys: bool = False) -> None:
         digest = self.digest()
-        if not dev_keys:
-            public_keys = TREZOR_T.bootloader_keys
-        else:
-            public_keys = TREZOR_T_DEV.bootloader_keys
-        # TODO: add model awareness
+        model_keys = Model.from_hw_model(self.hw_model).model_keys(dev_keys)
         try:
             cosi.verify(
                 self.signature,
                 digest,
-                TREZOR_T.bootloader_sigs_needed,
-                public_keys,
+                model_keys.bootloader_sigs_needed,
+                model_keys.bootloader_keys,
                 self.sigmask,
             )
         except Exception:

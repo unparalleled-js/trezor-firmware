@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include "secbool.h"
 
+#include "platform.h"
+
 #ifndef MIN_8bits
 #define MIN_8bits(a, b)                  \
   ({                                     \
@@ -51,7 +53,12 @@
 
 #define STAY_IN_BOOTLOADER_FLAG 0x0FC35A96
 
-void __attribute__((noreturn)) shutdown(void);
+// from linker script
+extern uint8_t firmware_header_start;
+extern uint8_t ccmram_start;
+extern uint8_t ccmram_end;
+
+void __attribute__((noreturn)) trezor_shutdown(void);
 
 void __attribute__((noreturn))
 __fatal_error(const char *expr, const char *msg, const char *file, int line,
@@ -69,21 +76,10 @@ void show_pin_too_many_screen(void);
 
 void hal_delay(uint32_t ms);
 uint32_t hal_ticks_ms();
-
-void clear_otg_hs_memory(void);
-
-extern uint32_t __stack_chk_guard;
+void hal_delay_us(uint16_t delay_us);
 
 void collect_hw_entropy(void);
 #define HW_ENTROPY_LEN (12 + 32)
 extern uint8_t HW_ENTROPY_DATA[HW_ENTROPY_LEN];
-
-// the following functions are defined in util.s
-
-void memset_reg(volatile void *start, volatile void *stop, uint32_t val);
-void jump_to(uint32_t address);
-void jump_to_unprivileged(uint32_t address);
-void jump_to_with_flag(uint32_t address, uint32_t register_flag);
-void ensure_compatible_settings(void);
 
 #endif

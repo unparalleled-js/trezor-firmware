@@ -76,8 +76,8 @@ def is_initialized() -> bool:
 
 
 def get_device_id() -> str:
-    from ubinascii import hexlify
     from trezorcrypto import random  # avoid pulling in trezor.crypto
+    from ubinascii import hexlify
 
     dev_id = common.get(_NAMESPACE, DEVICE_ID, public=True)
     if not dev_id:
@@ -193,11 +193,6 @@ def get_passphrase_always_on_device() -> bool:
     - If DEVICE(1) => returns True, the check against b"\x01" in get_bool succeeds.
     - If HOST(2) => returns False, the check against b"\x01" in get_bool fails.
     """
-    from trezor import utils
-
-    # Some models do not support passphrase input on device
-    if utils.MODEL in ("1", "R"):
-        return False
     return common.get_bool(_NAMESPACE, _PASSPHRASE_ALWAYS_ON_DEVICE)
 
 

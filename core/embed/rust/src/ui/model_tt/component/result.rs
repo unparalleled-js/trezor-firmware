@@ -1,72 +1,150 @@
 use crate::{
-    alpha,
+    strutil::StringType,
     ui::{
-        component::{
-            text::paragraphs::{ParagraphStrType, ParagraphVecShort, Paragraphs},
-            Child, Component, Event, EventCtx, Never, Pad,
-        },
+        component::{text::TextStyle, Child, Component, Event, EventCtx, Label, Never, Pad},
         constant::screen,
-        display::{self, Color, Icon},
-        geometry::{Offset, Point, Rect, CENTER},
+        display::{self, Color, Font, Icon},
+        geometry::{Alignment2D, Insets, Offset, Point, Rect},
+        model_tt::theme::FG,
     },
 };
 
-use crate::ui::model_tt::constant::{HEIGHT, WIDTH};
+use crate::ui::model_tt::{
+    constant::WIDTH,
+    theme::{RESULT_FOOTER_START, RESULT_PADDING},
+};
 
-pub struct ResultScreen<T> {
-    bg: Pad,
-    small_pad: Pad,
-    fg_color: Color,
-    bg_color: Color,
-    icon: Icon,
-    message_top: Child<Paragraphs<ParagraphVecShort<T>>>,
-    message_bottom: Child<Paragraphs<ParagraphVecShort<T>>>,
+const MESSAGE_AREA_START: i16 = 97;
+const ICON_CENTER_Y: i16 = 62;
+
+pub struct ResultStyle {
+    pub fg_color: Color,
+    pub bg_color: Color,
+    pub divider_color: Color,
 }
 
-impl<T: ParagraphStrType> ResultScreen<T> {
+impl ResultStyle {
+    pub const fn new(fg_color: Color, bg_color: Color, divider_color: Color) -> Self {
+        Self {
+            fg_color,
+            bg_color,
+            divider_color,
+        }
+    }
+
+    pub const fn message_style(&self) -> TextStyle {
+        TextStyle::new(Font::NORMAL, self.fg_color, self.bg_color, FG, FG)
+    }
+
+    pub const fn title_style(&self) -> TextStyle {
+        TextStyle::new(Font::BOLD, self.fg_color, self.bg_color, FG, FG)
+    }
+}
+
+pub struct ResultFooter<'a, T> {
+    style: &'a ResultStyle,
+    text: Label<T>,
+    area: Rect,
+}
+
+impl<'a, T: AsRef<str>> ResultFooter<'a, T> {
+    pub fn new(text: Label<T>, style: &'a ResultStyle) -> Self {
+        Self {
+            style,
+            text,
+            area: Rect::zero(),
+        }
+    }
+
+    pub const fn split_bounds() -> (Rect, Rect) {
+        let main_area = Rect::new(
+            Point::new(RESULT_PADDING, 0),
+            Point::new(WIDTH - RESULT_PADDING, RESULT_FOOTER_START),
+        );
+        let footer_area = Rect::new(
+            Point::new(RESULT_PADDING, RESULT_FOOTER_START),
+            Point::new(WIDTH - RESULT_PADDING, screen().height()),
+        );
+        (main_area, footer_area)
+    }
+}
+
+impl<T: AsRef<str>> Component for ResultFooter<'_, T> {
+    type Msg = Never;
+
+    fn place(&mut self, bounds: Rect) -> Rect {
+        self.area = bounds;
+        self.text.place(bounds);
+        bounds
+    }
+
+    fn paint(&mut self) {
+        // divider line
+        let bar = Rect::from_center_and_size(
+            Point::new(self.area.center().x, self.area.y0),
+            Offset::new(self.area.width(), 1),
+        );
+        display::rect_fill(bar, self.style.divider_color);
+
+        // footer text
+        self.text.paint();
+    }
+
+    fn event(&mut self, _ctx: &mut EventCtx, _event: Event) -> Option<Self::Msg> {
+        None
+    }
+}
+
+pub struct ResultScreen<'a, T> {
+    bg: Pad,
+    footer_pad: Pad,
+    style: &'a ResultStyle,
+    icon: Icon,
+    message: Child<Label<T>>,
+    footer: Child<ResultFooter<'a, &'a str>>,
+}
+
+impl<'a, T: StringType> ResultScreen<'a, T> {
     pub fn new(
-        fg_color: Color,
-        bg_color: Color,
+        style: &'a ResultStyle,
         icon: Icon,
-        message_top: Paragraphs<ParagraphVecShort<T>>,
-        message_bottom: Paragraphs<ParagraphVecShort<T>>,
+        message: T,
+        footer: Label<&'a str>,
         complete_draw: bool,
     ) -> Self {
         let mut instance = Self {
-            bg: Pad::with_background(bg_color),
-            small_pad: Pad::with_background(bg_color),
-            fg_color,
-            bg_color,
+            bg: Pad::with_background(style.bg_color),
+            footer_pad: Pad::with_background(style.bg_color),
+            style,
             icon,
-            message_top: Child::new(message_top),
-            message_bottom: Child::new(message_bottom),
+            message: Child::new(Label::centered(message, style.message_style())),
+            footer: Child::new(ResultFooter::new(footer, style)),
         };
 
         if complete_draw {
             instance.bg.clear();
         } else {
-            instance.small_pad.clear();
+            instance.footer_pad.clear();
         }
         instance
     }
 }
 
-impl<T: ParagraphStrType> Component for ResultScreen<T> {
+impl<'a, T: StringType> Component for ResultScreen<'a, T> {
     type Msg = Never;
 
-    fn place(&mut self, bounds: Rect) -> Rect {
-        self.bg
-            .place(Rect::new(Point::new(0, 0), Point::new(WIDTH, HEIGHT)));
+    fn place(&mut self, _bounds: Rect) -> Rect {
+        self.bg.place(screen());
 
-        self.message_top
-            .place(Rect::new(Point::new(15, 59), Point::new(WIDTH - 15, 149)));
+        let (main_area, footer_area) = ResultFooter::<&'a str>::split_bounds();
 
-        let bottom_area = Rect::new(Point::new(15, 151), Point::new(WIDTH - 15, HEIGHT));
+        self.footer_pad.place(footer_area);
+        self.footer.place(footer_area);
 
-        self.small_pad.place(bottom_area);
-        self.message_bottom.place(bottom_area);
+        let message_area = main_area.inset(Insets::top(MESSAGE_AREA_START));
+        self.message.place(message_area);
 
-        bounds
+        screen()
     }
 
     fn event(&mut self, _ctx: &mut EventCtx, _event: Event) -> Option<Self::Msg> {
@@ -75,19 +153,15 @@ impl<T: ParagraphStrType> Component for ResultScreen<T> {
 
     fn paint(&mut self) {
         self.bg.paint();
-        self.small_pad.paint();
+        self.footer_pad.paint();
 
         self.icon.draw(
-            Point::new(screen().center().x, 45),
-            CENTER,
-            self.fg_color,
-            self.bg_color,
+            Point::new(screen().center().x, ICON_CENTER_Y),
+            Alignment2D::CENTER,
+            self.style.fg_color,
+            self.style.bg_color,
         );
-        display::rect_fill(
-            Rect::from_top_left_and_size(Point::new(12, 149), Offset::new(216, 1)),
-            Color::alpha(self.bg_color, alpha!(0.2)),
-        );
-        self.message_top.paint();
-        self.message_bottom.paint();
+        self.message.paint();
+        self.footer.paint();
     }
 }

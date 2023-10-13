@@ -1,18 +1,18 @@
 use super::{Component, Event, EventCtx};
 use crate::ui::geometry::Rect;
 
-pub struct Map<T, F> {
+pub struct MsgMap<T, F> {
     inner: T,
     func: F,
 }
 
-impl<T, F> Map<T, F> {
+impl<T, F> MsgMap<T, F> {
     pub fn new(inner: T, func: F) -> Self {
         Self { inner, func }
     }
 }
 
-impl<T, F, U> Component for Map<T, F>
+impl<T, F, U> Component for MsgMap<T, F>
 where
     T: Component,
     F: Fn(T::Msg) -> Option<U>,
@@ -31,13 +31,14 @@ where
         self.inner.paint()
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.inner.bounds(sink);
     }
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T, F> crate::trace::Trace for Map<T, F>
+impl<T, F> crate::trace::Trace for MsgMap<T, F>
 where
     T: Component + crate::trace::Trace,
 {

@@ -101,7 +101,8 @@ def sd_protect(
 @session
 def wipe(client: "TrezorClient") -> "MessageType":
     ret = client.call(messages.WipeDevice())
-    client.init_device()
+    if not client.features.bootloader_mode:
+        client.init_device()
     return ret
 
 
@@ -241,6 +242,18 @@ def reboot_to_bootloader(client: "TrezorClient") -> "MessageType":
     return client.call(messages.RebootToBootloader())
 
 
+@session
+@expect(messages.Success, field="message", ret_type=str)
+def show_device_tutorial(client: "TrezorClient") -> "MessageType":
+    return client.call(messages.ShowDeviceTutorial())
+
+
+@session
+@expect(messages.Success, field="message", ret_type=str)
+def unlock_bootloader(client: "TrezorClient") -> "MessageType":
+    return client.call(messages.UnlockBootloader())
+
+
 @expect(messages.Success, field="message", ret_type=str)
 @session
 def set_busy(client: "TrezorClient", expiry_ms: Optional[int]) -> "MessageType":
@@ -252,3 +265,8 @@ def set_busy(client: "TrezorClient", expiry_ms: Optional[int]) -> "MessageType":
     ret = client.call(messages.SetBusy(expiry_ms=expiry_ms))
     client.refresh_features()
     return ret
+
+
+@expect(messages.AuthenticityProof)
+def authenticate(client: "TrezorClient", challenge: bytes):
+    return client.call(messages.AuthenticateDevice(challenge=challenge))

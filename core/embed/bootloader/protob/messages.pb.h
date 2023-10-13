@@ -15,13 +15,15 @@ typedef enum _MessageType {
     MessageType_MessageType_Ping = 1,
     MessageType_MessageType_Success = 2,
     MessageType_MessageType_Failure = 3,
+    MessageType_MessageType_WipeDevice = 5,
     MessageType_MessageType_FirmwareErase = 6,
     MessageType_MessageType_FirmwareUpload = 7,
     MessageType_MessageType_FirmwareRequest = 8,
     MessageType_MessageType_Features = 17,
     MessageType_MessageType_ButtonRequest = 26,
     MessageType_MessageType_ButtonAck = 27,
-    MessageType_MessageType_GetFeatures = 55
+    MessageType_MessageType_GetFeatures = 55,
+    MessageType_MessageType_UnlockBootloader = 96
 } MessageType;
 
 typedef enum _FailureType {
@@ -47,6 +49,10 @@ typedef struct _GetFeatures {
 typedef struct _Initialize {
     char dummy_field;
 } Initialize;
+
+typedef struct _UnlockBootloader {
+    char dummy_field;
+} UnlockBootloader;
 
 typedef struct _ButtonRequest {
     bool has_code;
@@ -91,6 +97,14 @@ typedef struct _Features {
     uint32_t fw_patch;
     bool has_fw_vendor;
     char fw_vendor[256];
+    bool has_internal_model;
+    char internal_model[17];
+    bool has_unit_color;
+    uint32_t unit_color;
+    bool has_unit_btconly;
+    bool unit_btconly;
+    bool has_bootloader_locked;
+    bool bootloader_locked;
 } Features;
 
 typedef struct _FirmwareErase {
@@ -99,9 +113,7 @@ typedef struct _FirmwareErase {
 } FirmwareErase;
 
 typedef struct _FirmwareRequest {
-    bool has_offset;
     uint32_t offset;
-    bool has_length;
     uint32_t length;
 } FirmwareRequest;
 
@@ -125,8 +137,8 @@ typedef struct _Success {
 
 /* Helper constants for enums */
 #define _MessageType_MIN MessageType_MessageType_Initialize
-#define _MessageType_MAX MessageType_MessageType_GetFeatures
-#define _MessageType_ARRAYSIZE ((MessageType)(MessageType_MessageType_GetFeatures+1))
+#define _MessageType_MAX MessageType_MessageType_UnlockBootloader
+#define _MessageType_ARRAYSIZE ((MessageType)(MessageType_MessageType_UnlockBootloader+1))
 
 #define _FailureType_MIN FailureType_Failure_UnexpectedMessage
 #define _FailureType_MAX FailureType_Failure_ProcessError
@@ -144,26 +156,28 @@ extern "C" {
 /* Initializer values for message structs */
 #define Initialize_init_default                  {0}
 #define GetFeatures_init_default                 {0}
-#define Features_init_default                    {false, "", 0, 0, 0, false, 0, false, "", false, "", false, "", false, 0, false, {0, {0}}, false, 0, false, "", false, 0, false, 0, false, 0, false, ""}
+#define Features_init_default                    {false, "", 0, 0, 0, false, 0, false, "", false, "", false, "", false, 0, false, {0, {0}}, false, 0, false, "", false, 0, false, 0, false, 0, false, "", false, "", false, 0, false, 0, false, 0}
 #define Ping_init_default                        {false, ""}
 #define Success_init_default                     {false, ""}
 #define Failure_init_default                     {false, _FailureType_MIN, false, ""}
 #define ButtonRequest_init_default               {false, _ButtonRequestType_MIN}
 #define ButtonAck_init_default                   {0}
 #define FirmwareErase_init_default               {false, 0}
-#define FirmwareRequest_init_default             {false, 0, false, 0}
+#define FirmwareRequest_init_default             {0, 0}
 #define FirmwareUpload_init_default              {{{NULL}, NULL}, false, {0, {0}}}
+#define UnlockBootloader_init_default            {0}
 #define Initialize_init_zero                     {0}
 #define GetFeatures_init_zero                    {0}
-#define Features_init_zero                       {false, "", 0, 0, 0, false, 0, false, "", false, "", false, "", false, 0, false, {0, {0}}, false, 0, false, "", false, 0, false, 0, false, 0, false, ""}
+#define Features_init_zero                       {false, "", 0, 0, 0, false, 0, false, "", false, "", false, "", false, 0, false, {0, {0}}, false, 0, false, "", false, 0, false, 0, false, 0, false, "", false, "", false, 0, false, 0, false, 0}
 #define Ping_init_zero                           {false, ""}
 #define Success_init_zero                        {false, ""}
 #define Failure_init_zero                        {false, _FailureType_MIN, false, ""}
 #define ButtonRequest_init_zero                  {false, _ButtonRequestType_MIN}
 #define ButtonAck_init_zero                      {0}
 #define FirmwareErase_init_zero                  {false, 0}
-#define FirmwareRequest_init_zero                {false, 0, false, 0}
+#define FirmwareRequest_init_zero                {0, 0}
 #define FirmwareUpload_init_zero                 {{{NULL}, NULL}, false, {0, {0}}}
+#define UnlockBootloader_init_zero               {0}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define ButtonRequest_code_tag                   1
@@ -185,6 +199,10 @@ extern "C" {
 #define Features_fw_minor_tag                    23
 #define Features_fw_patch_tag                    24
 #define Features_fw_vendor_tag                   25
+#define Features_internal_model_tag              44
+#define Features_unit_color_tag                  45
+#define Features_unit_btconly_tag                46
+#define Features_bootloader_locked_tag           49
 #define FirmwareErase_length_tag                 1
 #define FirmwareRequest_offset_tag               1
 #define FirmwareRequest_length_tag               2
@@ -220,7 +238,11 @@ X(a, STATIC,   OPTIONAL, STRING,   model,            21) \
 X(a, STATIC,   OPTIONAL, UINT32,   fw_major,         22) \
 X(a, STATIC,   OPTIONAL, UINT32,   fw_minor,         23) \
 X(a, STATIC,   OPTIONAL, UINT32,   fw_patch,         24) \
-X(a, STATIC,   OPTIONAL, STRING,   fw_vendor,        25)
+X(a, STATIC,   OPTIONAL, STRING,   fw_vendor,        25) \
+X(a, STATIC,   OPTIONAL, STRING,   internal_model,   44) \
+X(a, STATIC,   OPTIONAL, UINT32,   unit_color,       45) \
+X(a, STATIC,   OPTIONAL, BOOL,     unit_btconly,     46) \
+X(a, STATIC,   OPTIONAL, BOOL,     bootloader_locked,  49)
 #define Features_CALLBACK NULL
 #define Features_DEFAULT NULL
 
@@ -256,8 +278,8 @@ X(a, STATIC,   OPTIONAL, UINT32,   length,            1)
 #define FirmwareErase_DEFAULT NULL
 
 #define FirmwareRequest_FIELDLIST(X, a) \
-X(a, STATIC,   OPTIONAL, UINT32,   offset,            1) \
-X(a, STATIC,   OPTIONAL, UINT32,   length,            2)
+X(a, STATIC,   REQUIRED, UINT32,   offset,            1) \
+X(a, STATIC,   REQUIRED, UINT32,   length,            2)
 #define FirmwareRequest_CALLBACK NULL
 #define FirmwareRequest_DEFAULT NULL
 
@@ -266,6 +288,11 @@ X(a, CALLBACK, REQUIRED, BYTES,    payload,           1) \
 X(a, STATIC,   OPTIONAL, BYTES,    hash,              2)
 #define FirmwareUpload_CALLBACK pb_default_field_callback
 #define FirmwareUpload_DEFAULT NULL
+
+#define UnlockBootloader_FIELDLIST(X, a) \
+
+#define UnlockBootloader_CALLBACK NULL
+#define UnlockBootloader_DEFAULT NULL
 
 extern const pb_msgdesc_t Initialize_msg;
 extern const pb_msgdesc_t GetFeatures_msg;
@@ -278,6 +305,7 @@ extern const pb_msgdesc_t ButtonAck_msg;
 extern const pb_msgdesc_t FirmwareErase_msg;
 extern const pb_msgdesc_t FirmwareRequest_msg;
 extern const pb_msgdesc_t FirmwareUpload_msg;
+extern const pb_msgdesc_t UnlockBootloader_msg;
 
 /* Defines for backwards compatibility with code written before nanopb-0.4.0 */
 #define Initialize_fields &Initialize_msg
@@ -291,19 +319,21 @@ extern const pb_msgdesc_t FirmwareUpload_msg;
 #define FirmwareErase_fields &FirmwareErase_msg
 #define FirmwareRequest_fields &FirmwareRequest_msg
 #define FirmwareUpload_fields &FirmwareUpload_msg
+#define UnlockBootloader_fields &UnlockBootloader_msg
 
 /* Maximum encoded size of messages (where known) */
 /* FirmwareUpload_size depends on runtime parameters */
 #define ButtonAck_size                           0
 #define ButtonRequest_size                       2
 #define Failure_size                             260
-#define Features_size                            458
+#define Features_size                            490
 #define FirmwareErase_size                       6
 #define FirmwareRequest_size                     12
 #define GetFeatures_size                         0
 #define Initialize_size                          0
 #define Ping_size                                258
 #define Success_size                             258
+#define UnlockBootloader_size                    0
 
 #ifdef __cplusplus
 } /* extern "C" */

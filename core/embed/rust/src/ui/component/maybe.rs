@@ -93,6 +93,7 @@ where
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.pad.area);
         self.inner.bounds(sink);
@@ -141,5 +142,19 @@ pub fn paint_overlapping(components: &mut [&mut dyn PaintOverlapping]) {
 
     for component in components.iter_mut() {
         component.paint_overlapping()
+    }
+}
+
+// DEBUG-ONLY SECTION BELOW
+
+#[cfg(feature = "ui_debug")]
+impl<T> crate::trace::Trace for Maybe<T>
+where
+    T: Component + crate::trace::Trace,
+{
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Maybe");
+        t.child("inner", &self.inner);
+        t.bool("visible", self.visible);
     }
 }

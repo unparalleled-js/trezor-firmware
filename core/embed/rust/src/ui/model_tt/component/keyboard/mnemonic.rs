@@ -1,7 +1,6 @@
 use crate::ui::{
     component::{maybe::paint_overlapping, Child, Component, Event, EventCtx, Label, Maybe},
-    display::toif::Icon,
-    geometry::{Grid, Offset, Rect, CENTER},
+    geometry::{Alignment2D, Grid, Offset, Rect},
     model_tt::{
         component::{Button, ButtonMsg},
         theme,
@@ -34,20 +33,22 @@ where
         Self {
             prompt: Child::new(Maybe::visible(
                 theme::BG,
-                Label::centered(prompt, theme::label_keyboard()),
+                Label::centered(prompt, theme::label_keyboard_prompt()),
             )),
             back: Child::new(Maybe::hidden(
                 theme::BG,
                 Button::with_icon_blend(
-                    Icon::new(theme::IMAGE_BG_BACK_BTN_TALL),
-                    Icon::new(theme::ICON_BACK),
+                    theme::IMAGE_BG_BACK_BTN_TALL,
+                    theme::ICON_BACK,
                     Offset::new(30, 17),
                 )
-                .styled(theme::button_clear())
+                .styled(theme::button_reset())
                 .with_long_press(theme::ERASE_HOLD_DURATION),
             )),
             input: Child::new(Maybe::hidden(theme::BG, input)),
-            keys: T::keys().map(Button::with_text).map(Child::new),
+            keys: T::keys()
+                .map(|t| Button::with_text(t).styled(theme::button_pin()))
+                .map(Child::new),
         }
     }
 
@@ -94,14 +95,16 @@ where
     type Msg = MnemonicKeyboardMsg;
 
     fn place(&mut self, bounds: Rect) -> Rect {
-        let grid =
-            Grid::new(bounds.inset(theme::borders()), 4, 3).with_spacing(theme::KEYBOARD_SPACING);
+        let (_, bounds) = bounds
+            .inset(theme::borders())
+            .split_bottom(4 * theme::MNEMONIC_BUTTON_HEIGHT + 3 * theme::KEYBOARD_SPACING);
+        let grid = Grid::new(bounds, 4, 3).with_spacing(theme::KEYBOARD_SPACING);
         let back_area = grid.row_col(0, 0);
         let input_area = grid.row_col(0, 1).union(grid.row_col(0, 3));
 
         let prompt_center = grid.row_col(0, 0).union(grid.row_col(0, 3)).center();
         let prompt_size = self.prompt.inner().inner().max_size();
-        let prompt_area = Rect::snap(prompt_center, prompt_size, CENTER);
+        let prompt_area = Rect::snap(prompt_center, prompt_size, Alignment2D::CENTER);
 
         self.prompt.place(prompt_area);
         self.back.place(back_area);
@@ -159,6 +162,7 @@ where
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.prompt.bounds(sink);
         self.input.bounds(sink);
@@ -186,9 +190,14 @@ pub enum MnemonicInputMsg {
 }
 
 #[cfg(feature = "ui_debug")]
-impl<T, U> crate::trace::Trace for MnemonicKeyboard<T, U> {
+impl<T, U> crate::trace::Trace for MnemonicKeyboard<T, U>
+where
+    T: MnemonicInput + crate::trace::Trace,
+    U: AsRef<str>,
+{
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("MnemonicKeyboard");
-        t.close();
+        t.component("MnemonicKeyboard");
+        t.child("prompt", &self.prompt);
+        t.child("input", &self.input);
     }
 }

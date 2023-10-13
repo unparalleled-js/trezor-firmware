@@ -2,16 +2,16 @@ from micropython import const
 from typing import TYPE_CHECKING
 
 import storage.device
-from trezor import io
+from trezor import io, utils
 from trezor.sdcard import with_filesystem
 
 if TYPE_CHECKING:
-    from typing import TypeVar, Callable
+    from typing import Callable, TypeVar
 
     T = TypeVar("T", bound=Callable)
 
-
-fatfs = io.fatfs  # global_import_cache
+if utils.USE_SD_CARD:
+    fatfs = io.fatfs  # global_import_cache
 
 SD_CARD_HOT_SWAPPABLE = False
 SD_SALT_LEN_BYTES = const(32)

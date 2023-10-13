@@ -3,20 +3,32 @@ import sys
 from trezorutils import (  # noqa: F401
     BITCOIN_ONLY,
     EMULATOR,
+    INTERNAL_MODEL,
     MODEL,
+    MODEL_FULL_NAME,
     SCM_REVISION,
+    UI_LAYOUT,
+    USE_BACKLIGHT,
+    USE_OPTIGA,
+    USE_SD_CARD,
     VERSION_MAJOR,
     VERSION_MINOR,
     VERSION_PATCH,
+    bootloader_locked,
     consteq,
     firmware_hash,
     firmware_vendor,
     halt,
     memcpy,
     reboot_to_bootloader,
-    usb_data_connected,
+    unit_btconly,
+    unit_color,
 )
 from typing import TYPE_CHECKING
+
+# Will get replaced by "True" / "False" in the build process
+# However, needs to stay as an exported symbol for the unit tests
+MODEL_IS_T2B1: bool = INTERNAL_MODEL == "T2B1"
 
 DISABLE_ANIMATION = 0
 
@@ -30,13 +42,7 @@ if __debug__:
         LOG_MEMORY = 0
 
 if TYPE_CHECKING:
-    from typing import (
-        Any,
-        Iterator,
-        Protocol,
-        TypeVar,
-        Sequence,
-    )
+    from typing import Any, Iterator, Protocol, Sequence, TypeVar
 
     from trezor.protobuf import MessageType
 
@@ -181,8 +187,9 @@ if False:  # noqa
             self.data += hexlify(data).decode() + " "
 
         def digest(self) -> bytes:
-            from trezor import log
             from ubinascii import hexlify
+
+            from trezor import log
 
             digest = self.ctx.digest()
             log.debug(

@@ -86,11 +86,13 @@ defs_check: ## check validity of coin definitions and protobuf files
 ruststyle:
 	@echo [RUSTFMT]
 	@cd core/embed/rust ; cargo fmt
+	@cd rust/trezor-client ; cargo fmt
 
 ruststyle_check:
 	rustfmt --version
 	@echo [RUSTFMT]
 	@cd core/embed/rust ; cargo fmt -- --check
+	@cd rust/trezor-client ; cargo fmt -- --check
 
 python_support_check:
 	./tests/test_python_support.py
@@ -116,11 +118,13 @@ icons: ## generate FIDO service icons
 icons_check: ## generate FIDO service icons
 	python3 core/tools/build_icons.py --check
 
-protobuf: ## generate python protobuf headers
+protobuf: ## generate python and rust protobuf headers
 	./tools/build_protobuf
+	./rust/trezor-client/scripts/build_protos
 
 protobuf_check: ## check that generated protobuf headers are up to date
 	./tools/build_protobuf --check
+	./rust/trezor-client/scripts/build_protos --check
 
 ci_docs: ## generate CI documentation
 	./tools/generate_ci_docs.py
@@ -128,6 +132,12 @@ ci_docs: ## generate CI documentation
 ci_docs_check: ## check that generated CI documentation is up to date
 	./tools/generate_ci_docs.py --check
 
-gen:  mocks icons templates protobuf ci_docs ## regenerate auto-generated files from sources
+vendorheader: ## generate vendor header
+	./core/embed/vendorheader/generate.sh --quiet
 
-gen_check: mocks_check icons_check templates_check protobuf_check ci_docs_check ## check validity of auto-generated files
+vendorheader_check: ## check that vendor header is up to date
+	./core/embed/vendorheader/generate.sh --quiet --check
+
+gen:  mocks icons templates protobuf ci_docs vendorheader ## regenerate auto-generated files from sources
+
+gen_check: mocks_check icons_check templates_check protobuf_check ci_docs_check vendorheader_check ## check validity of auto-generated files

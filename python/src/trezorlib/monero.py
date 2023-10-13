@@ -21,8 +21,8 @@ from .tools import expect
 
 if TYPE_CHECKING:
     from .client import TrezorClient
-    from .tools import Address
     from .protobuf import MessageType
+    from .tools import Address
 
 
 # MAINNET = 0
@@ -37,10 +37,14 @@ def get_address(
     n: "Address",
     show_display: bool = False,
     network_type: messages.MoneroNetworkType = messages.MoneroNetworkType.MAINNET,
+    chunkify: bool = False,
 ) -> "MessageType":
     return client.call(
         messages.MoneroGetAddress(
-            address_n=n, show_display=show_display, network_type=network_type
+            address_n=n,
+            show_display=show_display,
+            network_type=network_type,
+            chunkify=chunkify,
         )
     )
 

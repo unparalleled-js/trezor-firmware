@@ -5,17 +5,19 @@ use heapless::Vec;
 use crate::{
     time::Duration,
     ui::{
-        component::{maybe::PaintOverlapping, Map},
+        component::{maybe::PaintOverlapping, MsgMap},
         display::Color,
         geometry::{Offset, Rect},
     },
 };
 
-#[cfg(feature = "buttons")]
+#[cfg(feature = "button")]
 use crate::ui::event::ButtonEvent;
 #[cfg(feature = "touch")]
 use crate::ui::event::TouchEvent;
 use crate::ui::event::USBEvent;
+
+use super::Paginate;
 
 /// Type used by components that do not return any messages.
 ///
@@ -54,6 +56,7 @@ pub trait Component {
     /// the `Child` wrapper.
     fn paint(&mut self);
 
+    #[cfg(feature = "ui_bounds")]
     /// Report current paint bounds of this component. Used for debugging.
     fn bounds(&self, _sink: &mut dyn FnMut(Rect)) {}
 }
@@ -146,8 +149,19 @@ where
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.component.bounds(sink)
+    }
+}
+
+impl<T: Paginate> Paginate for Child<T> {
+    fn page_count(&mut self) -> usize {
+        self.component.page_count()
+    }
+
+    fn change_page(&mut self, active_page: usize) {
+        self.component.change_page(active_page);
     }
 }
 
@@ -199,6 +213,7 @@ where
         self.1.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.0.bounds(sink);
         self.1.bounds(sink);
@@ -208,16 +223,14 @@ where
 #[cfg(feature = "ui_debug")]
 impl<T, U> crate::trace::Trace for (T, U)
 where
-    T: Component,
     T: crate::trace::Trace,
-    U: Component,
     U: crate::trace::Trace,
 {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("Tuple");
-        d.field("0", &self.0);
-        d.field("1", &self.1);
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.in_list("children", &|l| {
+            l.child(&self.0);
+            l.child(&self.1);
+        });
     }
 }
 
@@ -249,29 +262,11 @@ where
         self.2.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.0.bounds(sink);
         self.1.bounds(sink);
         self.2.bounds(sink);
-    }
-}
-
-#[cfg(feature = "ui_debug")]
-impl<T, U, V> crate::trace::Trace for (T, U, V)
-where
-    T: Component,
-    T: crate::trace::Trace,
-    U: Component,
-    U: crate::trace::Trace,
-    V: Component,
-    V: crate::trace::Trace,
-{
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("Tuple");
-        d.field("0", &self.0);
-        d.field("1", &self.1);
-        d.field("2", &self.2);
-        d.close();
     }
 }
 
@@ -301,6 +296,7 @@ where
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         if let Some(ref c) = self {
             c.bounds(sink)
@@ -309,7 +305,7 @@ where
 }
 
 pub trait ComponentExt: Sized {
-    fn map<F>(self, func: F) -> Map<Self, F>;
+    fn map<F>(self, func: F) -> MsgMap<Self, F>;
     fn into_child(self) -> Child<Self>;
     fn request_complete_repaint(&mut self, ctx: &mut EventCtx);
 }
@@ -318,8 +314,8 @@ impl<T> ComponentExt for T
 where
     T: Component,
 {
-    fn map<F>(self, func: F) -> Map<Self, F> {
-        Map::new(self, func)
+    fn map<F>(self, func: F) -> MsgMap<Self, F> {
+        MsgMap::new(self, func)
     }
 
     fn into_child(self) -> Child<Self> {
@@ -342,7 +338,7 @@ where
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Event<'a> {
-    #[cfg(feature = "buttons")]
+    #[cfg(feature = "button")]
     Button(ButtonEvent),
     #[cfg(feature = "touch")]
     Touch(TouchEvent),

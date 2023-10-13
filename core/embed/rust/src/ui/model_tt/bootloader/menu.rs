@@ -1,57 +1,59 @@
-use crate::ui::{
-    component::{Child, Component, Event, EventCtx, Label, Pad},
-    constant::{screen, WIDTH},
-    display::Icon,
-    geometry::{Alignment, Insets, Point, Rect},
-    model_tt::{
-        bootloader::theme::{
-            button_bld_menu, button_bld_menu_item, BLD_BG, CLOSE, CONTENT_PADDING,
-            CORNER_BUTTON_AREA, ERASE, REBOOT, TEXT_TITLE, TITLE_AREA,
+use crate::{
+    trezorhal::secbool::{secbool, sectrue},
+    ui::{
+        component::{Child, Component, Event, EventCtx, Label, Pad},
+        constant::{screen, WIDTH},
+        display::Icon,
+        geometry::{Insets, Point, Rect},
+        model_tt::{
+            bootloader::theme::{
+                button_bld, button_bld_menu, BLD_BG, BUTTON_HEIGHT, CONTENT_PADDING,
+                CORNER_BUTTON_AREA, CORNER_BUTTON_TOUCH_EXPANSION, FIRE24, REFRESH24, TEXT_TITLE,
+                TITLE_AREA, X32,
+            },
+            component::{Button, ButtonMsg::Clicked, IconText},
         },
-        component::{Button, ButtonMsg::Clicked, IconText},
     },
 };
-use heapless::String;
+
+const BUTTON_AREA_START: i16 = 56;
+const BUTTON_SPACING: i16 = 8;
 
 #[repr(u32)]
 #[derive(Copy, Clone, ToPrimitive)]
 pub enum MenuMsg {
-    Close = 1,
-    Reboot = 2,
-    FactoryReset = 3,
+    Close = 0xAABBCCDD,
+    Reboot = 0x11223344,
+    FactoryReset = 0x55667788,
 }
 
 pub struct Menu {
     bg: Pad,
-    title: Child<Label<String<32>>>,
+    title: Child<Label<&'static str>>,
     close: Child<Button<&'static str>>,
     reboot: Child<Button<&'static str>>,
     reset: Child<Button<&'static str>>,
 }
 
 impl Menu {
-    pub fn new(bld_version: &'static str) -> Self {
-        let content_reboot = IconText::new("REBOOT TREZOR", Icon::new(REBOOT));
-        let content_reset = IconText::new("FACTORY RESET", Icon::new(ERASE));
-
-        let mut title: String<32> = String::new();
-        unwrap!(title.push_str("BOOTLOADER "));
-        unwrap!(title.push_str(bld_version));
+    pub fn new(firmware_present: secbool) -> Self {
+        let content_reboot = IconText::new("REBOOT TREZOR", Icon::new(REFRESH24));
+        let content_reset = IconText::new("FACTORY RESET", Icon::new(FIRE24));
 
         let mut instance = Self {
             bg: Pad::with_background(BLD_BG),
-            title: Child::new(Label::new(title, Alignment::Start, TEXT_TITLE)),
+            title: Child::new(Label::left_aligned("BOOTLOADER", TEXT_TITLE).vertically_centered()),
             close: Child::new(
-                Button::with_icon(Icon::new(CLOSE))
+                Button::with_icon(Icon::new(X32))
                     .styled(button_bld_menu())
-                    .with_expanded_touch_area(Insets::uniform(13)),
+                    .with_expanded_touch_area(Insets::uniform(CORNER_BUTTON_TOUCH_EXPANSION)),
             ),
             reboot: Child::new(
-                Button::with_icon_and_text(content_reboot).styled(button_bld_menu_item()),
+                Button::with_icon_and_text(content_reboot)
+                    .styled(button_bld())
+                    .initially_enabled(sectrue == firmware_present),
             ),
-            reset: Child::new(
-                Button::with_icon_and_text(content_reset).styled(button_bld_menu_item()),
-            ),
+            reset: Child::new(Button::with_icon_and_text(content_reset).styled(button_bld())),
         };
         instance.bg.clear();
         instance
@@ -66,12 +68,18 @@ impl Component for Menu {
         self.title.place(TITLE_AREA);
         self.close.place(CORNER_BUTTON_AREA);
         self.reboot.place(Rect::new(
-            Point::new(CONTENT_PADDING, 64),
-            Point::new(WIDTH - CONTENT_PADDING, 64 + 38),
+            Point::new(CONTENT_PADDING, BUTTON_AREA_START),
+            Point::new(WIDTH - CONTENT_PADDING, BUTTON_AREA_START + BUTTON_HEIGHT),
         ));
         self.reset.place(Rect::new(
-            Point::new(CONTENT_PADDING, 110),
-            Point::new(WIDTH - CONTENT_PADDING, 110 + 38),
+            Point::new(
+                CONTENT_PADDING,
+                BUTTON_AREA_START + BUTTON_HEIGHT + BUTTON_SPACING,
+            ),
+            Point::new(
+                WIDTH - CONTENT_PADDING,
+                BUTTON_AREA_START + 2 * BUTTON_HEIGHT + BUTTON_SPACING,
+            ),
         ));
         bounds
     }
@@ -98,6 +106,7 @@ impl Component for Menu {
         self.reset.paint();
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.close.bounds(sink);
         self.reboot.bounds(sink);

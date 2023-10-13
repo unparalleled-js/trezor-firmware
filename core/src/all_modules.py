@@ -75,6 +75,8 @@ trezor.crypto.bech32
 import trezor.crypto.bech32
 trezor.crypto.cashaddr
 import trezor.crypto.cashaddr
+trezor.crypto.cosi
+import trezor.crypto.cosi
 trezor.crypto.curve
 import trezor.crypto.curve
 trezor.crypto.der
@@ -97,6 +99,8 @@ trezor.enums.Capability
 import trezor.enums.Capability
 trezor.enums.DebugButton
 import trezor.enums.DebugButton
+trezor.enums.DebugPhysicalButton
+import trezor.enums.DebugPhysicalButton
 trezor.enums.DebugSwipeDirection
 import trezor.enums.DebugSwipeDirection
 trezor.enums.DecredStakingSpendType
@@ -151,22 +155,36 @@ trezor.ui.layouts.fido
 import trezor.ui.layouts.fido
 trezor.ui.layouts.homescreen
 import trezor.ui.layouts.homescreen
+trezor.ui.layouts.progress
+import trezor.ui.layouts.progress
 trezor.ui.layouts.recovery
 import trezor.ui.layouts.recovery
 trezor.ui.layouts.reset
 import trezor.ui.layouts.reset
 trezor.ui.layouts.tr
 import trezor.ui.layouts.tr
-trezor.ui.layouts.tt_v2
-import trezor.ui.layouts.tt_v2
-trezor.ui.layouts.tt_v2.fido
-import trezor.ui.layouts.tt_v2.fido
-trezor.ui.layouts.tt_v2.homescreen
-import trezor.ui.layouts.tt_v2.homescreen
-trezor.ui.layouts.tt_v2.recovery
-import trezor.ui.layouts.tt_v2.recovery
-trezor.ui.layouts.tt_v2.reset
-import trezor.ui.layouts.tt_v2.reset
+trezor.ui.layouts.tr.fido
+import trezor.ui.layouts.tr.fido
+trezor.ui.layouts.tr.homescreen
+import trezor.ui.layouts.tr.homescreen
+trezor.ui.layouts.tr.progress
+import trezor.ui.layouts.tr.progress
+trezor.ui.layouts.tr.recovery
+import trezor.ui.layouts.tr.recovery
+trezor.ui.layouts.tr.reset
+import trezor.ui.layouts.tr.reset
+trezor.ui.layouts.tt
+import trezor.ui.layouts.tt
+trezor.ui.layouts.tt.fido
+import trezor.ui.layouts.tt.fido
+trezor.ui.layouts.tt.homescreen
+import trezor.ui.layouts.tt.homescreen
+trezor.ui.layouts.tt.progress
+import trezor.ui.layouts.tt.progress
+trezor.ui.layouts.tt.recovery
+import trezor.ui.layouts.tt.recovery
+trezor.ui.layouts.tt.reset
+import trezor.ui.layouts.tt.reset
 trezor.ui.style
 import trezor.ui.style
 trezor.utils
@@ -175,6 +193,8 @@ trezor.wire
 import trezor.wire
 trezor.wire.codec_v1
 import trezor.wire.codec_v1
+trezor.wire.context
+import trezor.wire.context
 trezor.wire.errors
 import trezor.wire.errors
 trezor.workflow
@@ -293,6 +313,8 @@ apps.management.apply_flags
 import apps.management.apply_flags
 apps.management.apply_settings
 import apps.management.apply_settings
+apps.management.authenticate_device
+import apps.management.authenticate_device
 apps.management.backup_device
 import apps.management.backup_device
 apps.management.backup_types
@@ -325,6 +347,8 @@ apps.management.sd_protect
 import apps.management.sd_protect
 apps.management.set_u2f_counter
 import apps.management.set_u2f_counter
+apps.management.show_tutorial
+import apps.management.show_tutorial
 apps.management.wipe_device
 import apps.management.wipe_device
 apps.misc
@@ -375,6 +399,8 @@ if not utils.BITCOIN_ONLY:
     import trezor.enums.CardanoTxWitnessType
     trezor.enums.EthereumDataType
     import trezor.enums.EthereumDataType
+    trezor.enums.EthereumDefinitionType
+    import trezor.enums.EthereumDefinitionType
     trezor.enums.MoneroNetworkType
     import trezor.enums.MoneroNetworkType
     trezor.enums.NEMImportanceTransferMode
@@ -481,6 +507,10 @@ if not utils.BITCOIN_ONLY:
     import apps.eos.writers
     apps.ethereum
     import apps.ethereum
+    apps.ethereum.definitions
+    import apps.ethereum.definitions
+    apps.ethereum.definitions_constants
+    import apps.ethereum.definitions_constants
     apps.ethereum.get_address
     import apps.ethereum.get_address
     apps.ethereum.get_public_key

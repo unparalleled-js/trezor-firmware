@@ -3,7 +3,7 @@ use crate::ui::geometry::Offset;
 use crate::ui::{
     component::{image::Image, Component, Event, EventCtx, Never},
     display,
-    geometry::{Rect, CENTER},
+    geometry::{Alignment2D, Rect},
 };
 
 pub struct Painter<F> {
@@ -39,6 +39,7 @@ where
         (self.func)(self.area);
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area)
     }
@@ -47,12 +48,12 @@ where
 #[cfg(feature = "ui_debug")]
 impl<F> crate::trace::Trace for Painter<F> {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.string("Painter")
+        t.component("Painter");
     }
 }
 
 pub fn image_painter(image: Image) -> Painter<impl FnMut(Rect)> {
-    let f = move |area: Rect| image.draw(area.center(), CENTER);
+    let f = move |area: Rect| image.draw(area.center(), Alignment2D::CENTER);
     Painter::new(f)
 }
 
@@ -64,5 +65,10 @@ pub fn jpeg_painter<'a>(
 ) -> Painter<impl FnMut(Rect)> {
     let off = Offset::new(size.x / (2 << scale), size.y / (2 << scale));
     let f = move |area: Rect| display::tjpgd::jpeg(image(), area.center() - off, scale);
+    Painter::new(f)
+}
+
+pub fn rect_painter(fg: display::Color, bg: display::Color) -> Painter<impl FnMut(Rect)> {
+    let f = move |area: Rect| display::rect_fill_rounded(area, fg, bg, 2);
     Painter::new(f)
 }

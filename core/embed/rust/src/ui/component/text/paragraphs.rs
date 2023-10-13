@@ -1,9 +1,12 @@
 use heapless::Vec;
 
-use crate::ui::{
-    component::{Component, Event, EventCtx, Never, Paginate},
-    display::toif::Icon,
-    geometry::{Alignment, Insets, LinearPlacement, Offset, Point, Rect, TOP_LEFT},
+use crate::{
+    strutil::StringType,
+    ui::{
+        component::{Component, Event, EventCtx, Never, Paginate},
+        display::toif::Icon,
+        geometry::{Alignment, Alignment2D, Insets, LinearPlacement, Offset, Point, Rect},
+    },
 };
 
 use super::layout::{LayoutFit, TextLayout, TextStyle};
@@ -24,28 +27,9 @@ pub const PARAGRAPH_BOTTOM_SPACE: i16 = 5;
 pub type ParagraphVecLong<T> = Vec<Paragraph<T>, 32>;
 pub type ParagraphVecShort<T> = Vec<Paragraph<T>, 8>;
 
-/// Trait for internal representation of strings, which need to support
-/// converting to short-lived &str reference as well as creating a new string by
-/// skipping some number of bytes. Exists so that we can support `StrBuffer` as
-/// well as `&'static str`.
-///
-/// NOTE: do not implement this trait for `&'static str` in firmware. We always
-/// use StrBuffer because using multiple internal representations results in
-/// multiple copies of the code in flash memory.
-pub trait ParagraphStrType: AsRef<str> {
-    fn skip_prefix(&self, bytes: usize) -> Self;
-}
-
-#[cfg(feature = "bootloader")]
-impl ParagraphStrType for &str {
-    fn skip_prefix(&self, chars: usize) -> Self {
-        &self[chars..]
-    }
-}
-
 pub trait ParagraphSource {
     /// Determines the output type produced.
-    type StrType: ParagraphStrType;
+    type StrType: StringType;
 
     /// Return text and associated style for given paragraph index and character
     /// offset within the paragraph.
@@ -115,7 +99,7 @@ where
 
     /// Helper for `change_offset` which should not get monomorphized as it
     /// doesn't refer to T or Self.
-    fn dyn_change_offset<S: ParagraphStrType>(
+    fn dyn_change_offset<S: StringType>(
         mut area: Rect,
         mut offset: PageOffset,
         source: &dyn ParagraphSource<StrType = S>,
@@ -149,11 +133,11 @@ where
 
     /// Iterate over visible layouts (bounding box, style) together
     /// with corresponding string content. Should not get monomorphized.
-    fn foreach_visible<'a, 'b, S: ParagraphStrType>(
+    fn foreach_visible<'a, S: StringType>(
         source: &'a dyn ParagraphSource<StrType = S>,
         visible: &'a [TextLayout],
         offset: PageOffset,
-        func: &'b mut dyn FnMut(&TextLayout, &str),
+        func: &mut dyn FnMut(&TextLayout, &str),
     ) {
         let mut vis_iter = visible.iter();
         let mut chr = offset.chr;
@@ -201,6 +185,7 @@ where
         )
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area);
         for layout in &self.visible {
@@ -237,17 +222,23 @@ pub mod trace {
 
     impl<T: ParagraphSource> crate::trace::Trace for Paragraphs<T> {
         fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-            t.open("Paragraphs");
-            Self::foreach_visible(
-                &self.source,
-                &self.visible,
-                self.offset,
-                &mut |layout, content| {
-                    layout.layout_text(content, &mut layout.initial_cursor(), &mut TraceSink(t));
-                    t.string("\n");
-                },
-            );
-            t.close();
+            t.string("component", "Paragraphs");
+            t.in_list("paragraphs", &|par_list| {
+                Self::foreach_visible(
+                    &self.source,
+                    &self.visible,
+                    self.offset,
+                    &mut |layout, content| {
+                        par_list.in_list(&|par| {
+                            layout.layout_text(
+                                content,
+                                &mut layout.initial_cursor(),
+                                &mut TraceSink(par),
+                            );
+                        });
+                    },
+                );
+            });
         }
     }
 }
@@ -359,7 +350,7 @@ impl PageOffset {
     ///
     /// If the returned remaining area is not None then it holds that
     /// `next_offset.par == self.par + 1`.
-    fn advance<S: ParagraphStrType>(
+    fn advance<S: StringType>(
         mut self,
         area: Rect,
         source: &dyn ParagraphSource<StrType = S>,
@@ -425,7 +416,7 @@ impl PageOffset {
         )
     }
 
-    fn should_place_pair_on_next_page<S: ParagraphStrType>(
+    fn should_place_pair_on_next_page<S: StringType>(
         this_paragraph: &Paragraph<S>,
         next_paragraph: &Paragraph<S>,
         area: Rect,
@@ -476,7 +467,7 @@ struct PageBreakIterator<'a, T> {
 }
 
 impl<T: ParagraphSource> PageBreakIterator<'_, T> {
-    fn dyn_next<S: ParagraphStrType>(
+    fn dyn_next<S: StringType>(
         mut area: Rect,
         paragraphs: &dyn ParagraphSource<StrType = S>,
         mut offset: PageOffset,
@@ -533,13 +524,15 @@ pub struct Checklist<T> {
     current: usize,
     icon_current: Icon,
     icon_done: Icon,
+    /// How wide will the left icon column be
+    check_width: i16,
+    /// Offset of the icon representing DONE
+    done_offset: Offset,
+    /// Offset of the icon representing CURRENT
+    current_offset: Offset,
 }
 
 impl<T> Checklist<T> {
-    const CHECK_WIDTH: i16 = 16;
-    const DONE_OFFSET: Offset = Offset::new(-2, 6);
-    const CURRENT_OFFSET: Offset = Offset::new(2, 3);
-
     pub fn from_paragraphs(
         icon_current: Icon,
         icon_done: Icon,
@@ -552,14 +545,32 @@ impl<T> Checklist<T> {
             current,
             icon_current,
             icon_done,
+            check_width: 0,
+            done_offset: Offset::zero(),
+            current_offset: Offset::zero(),
         }
+    }
+
+    pub fn with_check_width(mut self, check_width: i16) -> Self {
+        self.check_width = check_width;
+        self
+    }
+
+    pub fn with_done_offset(mut self, done_offset: Offset) -> Self {
+        self.done_offset = done_offset;
+        self
+    }
+
+    pub fn with_current_offset(mut self, current_offset: Offset) -> Self {
+        self.current_offset = current_offset;
+        self
     }
 
     fn paint_icon(&self, layout: &TextLayout, icon: Icon, offset: Offset) {
         let top_left = Point::new(self.area.x0, layout.bounds.y0);
         icon.draw(
             top_left + offset,
-            TOP_LEFT,
+            Alignment2D::TOP_LEFT,
             layout.style.text_color,
             layout.style.background_color,
         );
@@ -574,7 +585,7 @@ where
 
     fn place(&mut self, bounds: Rect) -> Rect {
         self.area = bounds;
-        let para_area = bounds.inset(Insets::left(Self::CHECK_WIDTH));
+        let para_area = bounds.inset(Insets::left(self.check_width));
         self.paragraphs.place(para_area);
         self.area
     }
@@ -588,26 +599,37 @@ where
 
         let current_visible = self.current.saturating_sub(self.paragraphs.offset.par);
         for layout in self.paragraphs.visible.iter().take(current_visible) {
-            self.paint_icon(layout, self.icon_done, Self::DONE_OFFSET);
+            self.paint_icon(layout, self.icon_done, self.done_offset);
         }
         if let Some(layout) = self.paragraphs.visible.iter().nth(current_visible) {
-            self.paint_icon(layout, self.icon_current, Self::CURRENT_OFFSET);
+            self.paint_icon(layout, self.icon_current, self.current_offset);
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         sink(self.area);
         self.paragraphs.bounds(sink);
     }
 }
 
+impl<T> Paginate for Checklist<T>
+where
+    T: ParagraphSource,
+{
+    fn page_count(&mut self) -> usize {
+        1
+    }
+
+    fn change_page(&mut self, _to_page: usize) {}
+}
+
 #[cfg(feature = "ui_debug")]
 impl<T: ParagraphSource> crate::trace::Trace for Checklist<T> {
     fn trace(&self, t: &mut dyn crate::trace::Tracer) {
-        t.open("Checklist");
-        t.field("current", &self.current);
-        t.field("items", &self.paragraphs);
-        t.close();
+        t.component("Checklist");
+        t.int("current", self.current as i64);
+        t.child("items", &self.paragraphs);
     }
 }
 
@@ -631,7 +653,7 @@ where
     }
 }
 
-impl<T: ParagraphStrType, const N: usize> ParagraphSource for Vec<Paragraph<T>, N> {
+impl<T: StringType, const N: usize> ParagraphSource for Vec<Paragraph<T>, N> {
     type StrType = T;
 
     fn at(&self, index: usize, offset: usize) -> Paragraph<Self::StrType> {
@@ -644,7 +666,7 @@ impl<T: ParagraphStrType, const N: usize> ParagraphSource for Vec<Paragraph<T>, 
     }
 }
 
-impl<T: ParagraphStrType, const N: usize> ParagraphSource for [Paragraph<T>; N] {
+impl<T: StringType, const N: usize> ParagraphSource for [Paragraph<T>; N] {
     type StrType = T;
 
     fn at(&self, index: usize, offset: usize) -> Paragraph<Self::StrType> {
@@ -657,7 +679,7 @@ impl<T: ParagraphStrType, const N: usize> ParagraphSource for [Paragraph<T>; N] 
     }
 }
 
-impl<T: ParagraphStrType> ParagraphSource for Paragraph<T> {
+impl<T: StringType> ParagraphSource for Paragraph<T> {
     type StrType = T;
 
     fn at(&self, index: usize, offset: usize) -> Paragraph<Self::StrType> {

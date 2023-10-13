@@ -2,6 +2,8 @@
 #![deny(clippy::all)]
 #![allow(clippy::new_without_default)]
 #![deny(unsafe_op_in_unsafe_fn)]
+// Allowing dead code not to cause a lot of warnings when building for a specific target
+// (when building for TR, a lot of code only used in TT would get marked as unused).
 #![allow(dead_code)]
 #![feature(lang_items)]
 #![feature(optimize_attribute)]
@@ -9,10 +11,12 @@
 #[macro_use]
 extern crate num_derive;
 
+#[macro_use]
 mod error;
 // use trezorhal for its macros early
 #[macro_use]
 mod trezorhal;
+mod maybe_trace;
 #[cfg(feature = "micropython")]
 #[macro_use]
 mod micropython;
@@ -29,6 +33,7 @@ pub mod ui;
 pub mod strutil;
 
 #[cfg(feature = "debug")]
+#[cfg(not(test))]
 #[panic_handler]
 /// More detailed panic handling. The difference against
 /// default `panic` below is that this "debug" version
@@ -39,6 +44,9 @@ fn panic_debug(panic_info: &core::panic::PanicInfo) -> ! {
 
     if let Some(location) = panic_info.location() {
         let file = location.file();
+        print!(file);
+        print!(":");
+        println!(inttostr!(location.line()));
         trezorhal::fatal_error::__fatal_error("", "rs", file, location.line(), "");
     } else {
         trezorhal::fatal_error::__fatal_error("", "rs", "", 0, "");

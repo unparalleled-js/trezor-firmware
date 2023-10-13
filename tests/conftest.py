@@ -18,14 +18,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING, Generator, Iterator
 
 import pytest
 import xdist
 
 from trezorlib import debuglink, log
 from trezorlib.debuglink import TrezorClientDebugLink as Client
-from trezorlib.device import apply_settings, wipe as wipe_device
+from trezorlib.device import apply_settings
+from trezorlib.device import wipe as wipe_device
 from trezorlib.transport import enumerate_devices, get_transport
 
 from . import ui_tests
@@ -33,10 +34,11 @@ from .device_handler import BackgroundDeviceHandler
 from .emulators import EmulatorWrapper
 
 if TYPE_CHECKING:
-    from trezorlib._internal.emulator import Emulator
     from _pytest.config import Config
     from _pytest.config.argparsing import Parser
     from _pytest.terminal import TerminalReporter
+
+    from trezorlib._internal.emulator import Emulator
 
 
 HERE = Path(__file__).resolve().parent
@@ -44,6 +46,28 @@ HERE = Path(__file__).resolve().parent
 
 # So that we see details of failed asserts from this module
 pytest.register_assert_rewrite("tests.common")
+
+
+def _emulator_wrapper_main_args() -> list[str]:
+    """Look at TREZOR_PROFILING env variable, so that we can generate coverage reports."""
+    do_profiling = os.environ.get("TREZOR_PROFILING") == "1"
+    if do_profiling:
+        core_dir = HERE.parent / "core"
+        profiling_wrapper = core_dir / "prof" / "prof.py"
+        # So that the coverage reports have the correct paths
+        os.environ["TREZOR_SRC"] = str(core_dir / "src")
+        return [str(profiling_wrapper)]
+    else:
+        return ["-m", "main"]
+
+
+@pytest.fixture
+def core_emulator(request: pytest.FixtureRequest) -> Iterator[Emulator]:
+    """Fixture returning default core emulator with possibility of screen recording."""
+    with EmulatorWrapper("core", main_args=_emulator_wrapper_main_args()) as emu:
+        # Modifying emu.client to add screen recording (when --ui=test is used)
+        with ui_tests.screen_recording(emu.client, request) as _:
+            yield emu
 
 
 @pytest.fixture(scope="session")
@@ -88,23 +112,12 @@ def emulator(request: pytest.FixtureRequest) -> Generator["Emulator", None, None
         # 1. normal link, 2. debug link and 3. webauthn fake interface
         return 20000 + int(worker_id[2:]) * 3
 
-    # So that we can generate coverage reports
-    profiling = os.environ.get("TREZOR_PROFILING") == "1"
-    if profiling:
-        core_dir = HERE.parent / "core"
-        profiling_wrapper = core_dir / "prof" / "prof.py"
-        main_args = [str(profiling_wrapper)]
-        # So that the coverage reports have the correct paths
-        os.environ["TREZOR_SRC"] = str(core_dir / "src")
-    else:
-        main_args = ["-m", "main"]
-
     with EmulatorWrapper(
         model,
         port=_get_port(),
         headless=True,
         auto_interact=not interact,
-        main_args=main_args,
+        main_args=_emulator_wrapper_main_args(),
     ) as emu:
         yield emu
 
@@ -157,7 +170,7 @@ def client(
     Every test function that requires a client instance will get it from here.
     If we can't connect to a debuggable device, the test will fail.
     If 'skip_t2' is used and TT is connected, the test is skipped. Vice versa with T1
-    and 'skip_t1'.
+    and 'skip_t1'. Same with TR.
 
     The client instance is wiped and preconfigured with "all all all..." mnemonic, no
     password and no pin. It is possible to customize this with the `setup_client`
@@ -179,6 +192,11 @@ def client(
         pytest.skip("Test excluded on Trezor T")
     if request.node.get_closest_marker("skip_t1") and _raw_client.features.model == "1":
         pytest.skip("Test excluded on Trezor 1")
+    if (
+        request.node.get_closest_marker("skip_tr")
+        and _raw_client.features.model == "Safe 3"
+    ):
+        pytest.skip("Test excluded on Trezor R")
 
     sd_marker = request.node.get_closest_marker("sd_card")
     if sd_marker and not _raw_client.features.sd_card_present:
@@ -197,6 +215,9 @@ def client(
     except Exception:
         request.session.shouldstop = "Failed to communicate with Trezor"
         pytest.fail("Failed to communicate with Trezor")
+
+    # Resetting all the debug events to not be influenced by previous test
+    _raw_client.debug.reset_debug_events()
 
     if test_ui:
         # we need to reseed before the wipe
@@ -274,6 +295,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: pytest.ExitCode) -
             test_ui,  # type: ignore
             bool(session.config.getoption("ui_check_missing")),
             bool(session.config.getoption("record_text_layout")),
+            bool(session.config.getoption("do_master_diff")),
         )
 
 
@@ -326,7 +348,14 @@ def pytest_addoption(parser: "Parser") -> None:
         action="store_true",
         default=False,
         help="Saving debugging traces for each screen change. "
-        "Will generate a report with text from all test-cases. ",
+        "Will generate a report with text from all test-cases.",
+    )
+    parser.addoption(
+        "--do-master-diff",
+        action="store_true",
+        default=False,
+        help="Generating a master-diff report. "
+        "This shows all unique differing screens compared to master.",
     )
 
 
@@ -338,6 +367,7 @@ def pytest_configure(config: "Config") -> None:
     # register known markers
     config.addinivalue_line("markers", "skip_t1: skip the test on Trezor One")
     config.addinivalue_line("markers", "skip_t2: skip the test on Trezor T")
+    config.addinivalue_line("markers", "skip_tr: skip the test on Trezor R")
     config.addinivalue_line(
         "markers", "experimental: enable experimental features on Trezor"
     )
@@ -360,8 +390,10 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     Ensures that altcoin tests are skipped, and that no test is skipped on
     both T1 and TT.
     """
-    if item.get_closest_marker("skip_t1") and item.get_closest_marker("skip_t2"):
-        raise RuntimeError("Don't skip tests for both trezors!")
+    if all(
+        item.get_closest_marker(marker) for marker in ("skip_t1", "skip_t2", "skip_tr")
+    ):
+        raise RuntimeError("Don't skip tests for all trezor models!")
 
     skip_altcoins = int(os.environ.get("TREZOR_PYTEST_SKIP_ALTCOINS", 0))
     if item.get_closest_marker("altcoin") and skip_altcoins:

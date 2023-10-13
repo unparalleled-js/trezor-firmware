@@ -5,14 +5,16 @@ use heapless::String;
 use crate::{
     trezorhal::slip39,
     ui::{
-        component::{Component, Event, EventCtx},
+        component::{
+            text::common::{TextBox, TextEdit},
+            Component, Event, EventCtx,
+        },
         display,
-        display::toif::Icon,
-        geometry::{Offset, Rect, CENTER},
+        geometry::{Alignment2D, Offset, Rect},
         model_tt::{
             component::{
                 keyboard::{
-                    common::{paint_pending_marker, MultiTapKeyboard, TextBox, TextEdit},
+                    common::{paint_pending_marker, MultiTapKeyboard},
                     mnemonic::{MnemonicInput, MnemonicInputMsg, MNEMONIC_KEY_COUNT},
                 },
                 Button, ButtonContent, ButtonMsg,
@@ -156,7 +158,7 @@ impl Component for Slip39Input {
                     .assert_if_debugging_ui("Text buffer is too small");
             }
         }
-        display::text(
+        display::text_left(
             text_baseline,
             text.as_str(),
             style.font,
@@ -174,10 +176,16 @@ impl Component for Slip39Input {
             // Icon is painted in the right-center point, of expected size 16x16 pixels, and
             // 16px from the right edge.
             let icon_center = area.top_right().center(area.bottom_right()) - Offset::new(16 + 8, 0);
-            icon.draw(icon_center, CENTER, style.text_color, style.button_color);
+            icon.draw(
+                icon_center,
+                Alignment2D::CENTER,
+                style.text_color,
+                style.button_color,
+            );
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.button.bounds(sink);
     }
@@ -186,7 +194,8 @@ impl Component for Slip39Input {
 impl Slip39Input {
     pub fn new() -> Self {
         Self {
-            button: Button::empty(),
+            // Button has the same style the whole time
+            button: Button::empty().styled(theme::button_pin_confirm()),
             textbox: TextBox::empty(),
             multi_tap: MultiTapKeyboard::new(),
             final_word: None,
@@ -224,13 +233,11 @@ impl Slip39Input {
         if self.final_word.is_some() {
             // Confirm button.
             self.button.enable(ctx);
-            self.button.set_stylesheet(ctx, theme::button_confirm());
             self.button
-                .set_content(ctx, ButtonContent::Icon(Icon::new(theme::ICON_CONFIRM)));
+                .set_content(ctx, ButtonContent::Icon(theme::ICON_LIST_CHECK));
         } else {
             // Disabled button.
             self.button.disable(ctx);
-            self.button.set_stylesheet(ctx, theme::button_default());
             self.button.set_content(ctx, ButtonContent::Text(""));
         }
     }
@@ -256,5 +263,15 @@ impl Slip39Mask {
     /// Returns `true` if mask has exactly one bit set to 1, or is equal to 0.
     fn is_final(&self) -> bool {
         self.0.count_ones() <= 1
+    }
+}
+
+// DEBUG-ONLY SECTION BELOW
+
+#[cfg(feature = "ui_debug")]
+impl crate::trace::Trace for Slip39Input {
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Slip39Input");
+        t.child("textbox", &self.textbox);
     }
 }

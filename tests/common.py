@@ -15,18 +15,26 @@
 # If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
 
 import json
+import re
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, List, Optional
+from typing import TYPE_CHECKING, Generator, Optional
+from unittest import mock
 
 import pytest
 
-from trezorlib import btc, tools
+from trezorlib import btc, messages, tools
 from trezorlib.messages import ButtonRequestType
 
 if TYPE_CHECKING:
-    from trezorlib.debuglink import DebugLink, TrezorClientDebugLink as Client
-    from trezorlib.messages import ButtonRequest
     from _pytest.mark.structures import MarkDecorator
+
+    from trezorlib.debuglink import DebugLink
+    from trezorlib.debuglink import TrezorClientDebugLink as Client
+    from trezorlib.messages import ButtonRequest
+
+
+BRGeneratorType = Generator[None, messages.ButtonRequest, None]
 
 
 # fmt: off
@@ -58,6 +66,10 @@ TEST_ADDRESS_N = tools.parse_path("m/44h/1h/0h/0/0")
 COMMON_FIXTURES_DIR = (
     Path(__file__).resolve().parent.parent / "common" / "tests" / "fixtures"
 )
+
+# So that all the random things are consistent
+MOCK_OS_URANDOM = mock.Mock(return_value=EXTERNAL_ENTROPY)
+WITH_MOCK_URANDOM = mock.patch("os.urandom", MOCK_OS_URANDOM)
 
 
 def parametrize_using_common_fixtures(*paths: str) -> "MarkDecorator":
@@ -122,64 +134,8 @@ def generate_entropy(
     return entropy_stripped
 
 
-def recovery_enter_shares(
-    debug: "DebugLink",
-    shares: List[str],
-    groups: bool = False,
-    click_info: bool = False,
-) -> Generator[None, "ButtonRequest", None]:
-    """Perform the recovery flow for a set of Shamir shares.
-
-    For use in an input flow function.
-    Example:
-
-    def input_flow():
-        yield  # start recovery
-        client.debug.press_yes()
-        yield from recovery_enter_shares(client.debug, SOME_SHARES)
-    """
-    word_count = len(shares[0].split(" "))
-
-    # Homescreen - proceed to word number selection
-    yield
-    debug.press_yes()
-    # Input word number
-    br = yield
-    assert br.code == ButtonRequestType.MnemonicWordCount
-    debug.input(str(word_count))
-    # Homescreen - proceed to share entry
-    yield
-    debug.press_yes()
-    # Enter shares
-    for share in shares:
-        br = yield
-        assert br.code == ButtonRequestType.MnemonicInput
-        # Enter mnemonic words
-        for word in share.split(" "):
-            debug.input(word)
-
-        if groups:
-            # Confirm share entered
-            yield
-            debug.press_yes()
-
-        # Homescreen - continue
-        # or Homescreen - confirm success
-        yield
-
-        if click_info:
-            # Moving through the INFO button
-            debug.press_info()
-            yield
-            debug.swipe_up()
-            debug.press_yes()
-
-        # Finishing with current share
-        debug.press_yes()
-
-
 def click_through(
-    debug: "DebugLink", screens: int, code: ButtonRequestType = None
+    debug: "DebugLink", screens: int, code: Optional[ButtonRequestType] = None
 ) -> Generator[None, "ButtonRequest", None]:
     """Click through N dialog screens.
 
@@ -203,6 +159,20 @@ def click_through(
 def read_and_confirm_mnemonic(
     debug: "DebugLink", choose_wrong: bool = False
 ) -> Generator[None, "ButtonRequest", Optional[str]]:
+    # TODO: these are very similar, reuse some code
+    if debug.model == "T":
+        mnemonic = yield from read_and_confirm_mnemonic_tt(debug, choose_wrong)
+    elif debug.model == "Safe 3":
+        mnemonic = yield from read_and_confirm_mnemonic_tr(debug, choose_wrong)
+    else:
+        raise ValueError(f"Unknown model: {debug.model}")
+
+    return mnemonic
+
+
+def read_and_confirm_mnemonic_tt(
+    debug: "DebugLink", choose_wrong: bool = False
+) -> Generator[None, "ButtonRequest", Optional[str]]:
     """Read a given number of mnemonic words from Trezor T screen and correctly
     answer confirmation questions. Return the full mnemonic.
 
@@ -214,20 +184,25 @@ def read_and_confirm_mnemonic(
 
         mnemonic = yield from read_and_confirm_mnemonic(client.debug)
     """
-    mnemonic = []
+    mnemonic: list[str] = []
     br = yield
     assert br.pages is not None
-    for _ in range(br.pages - 1):
-        mnemonic.extend(debug.read_reset_word().split())
-        debug.swipe_up(wait=True)
 
-    # last page is confirmation
-    mnemonic.extend(debug.read_reset_word().split())
+    debug.wait_layout()
+
+    for i in range(br.pages):
+        words = debug.wait_layout().seed_words()
+        mnemonic.extend(words)
+        # Not swiping on the last page
+        if i < br.pages - 1:
+            debug.swipe_up()
+
     debug.press_yes()
 
     # check share
     for _ in range(3):
-        index = debug.read_reset_word_pos()
+        word_pos = int(debug.wait_layout().text_content().split()[2])
+        index = word_pos - 1
         if choose_wrong:
             debug.input(mnemonic[(index + 1) % len(mnemonic)])
             return None
@@ -237,7 +212,65 @@ def read_and_confirm_mnemonic(
     return " ".join(mnemonic)
 
 
+def read_and_confirm_mnemonic_tr(
+    debug: "DebugLink", choose_wrong: bool = False
+) -> Generator[None, "ButtonRequest", Optional[str]]:
+    mnemonic: list[str] = []
+    yield  # write down all 12 words in order
+    debug.press_yes()
+    br = yield
+    assert br.pages is not None
+    for _ in range(br.pages - 1):
+        layout = debug.wait_layout()
+        words = layout.seed_words()
+        mnemonic.extend(words)
+        debug.press_right()
+    debug.press_yes()
+
+    yield  # Select correct words...
+    debug.press_right()
+
+    # check share
+    for _ in range(3):
+        word_pos_match = re.search(r"\d+", debug.wait_layout().title())
+        assert word_pos_match is not None
+        word_pos = int(word_pos_match.group(0))
+        index = word_pos - 1
+        if choose_wrong:
+            debug.input(mnemonic[(index + 1) % len(mnemonic)])
+            return None
+        else:
+            debug.input(mnemonic[index])
+
+    return " ".join(mnemonic)
+
+
+def click_info_button_tt(debug: "DebugLink"):
+    """Click Shamir backup info button and return back."""
+    debug.press_info()
+    yield  # Info screen with text
+    debug.press_yes()
+
+
+def check_pin_backoff_time(attempts: int, start: float) -> None:
+    """Helper to assert the exponentially growing delay after incorrect PIN attempts"""
+    expected = (2**attempts) - 1
+    got = round(time.time() - start, 2)
+    assert got >= expected
+
+
 def get_test_address(client: "Client") -> str:
     """Fetch a testnet address on a fixed path. Useful to make a pin/passphrase
     protected call, or to identify the root secret (seed+passphrase)"""
     return btc.get_address(client, "Testnet", TEST_ADDRESS_N)
+
+
+def compact_size(n) -> bytes:
+    if n < 253:
+        return n.to_bytes(1, "little")
+    elif n < 0x1_0000:
+        return bytes([253]) + n.to_bytes(2, "little")
+    elif n < 0x1_0000_0000:
+        return bytes([254]) + n.to_bytes(4, "little")
+    else:
+        return bytes([255]) + n.to_bytes(8, "little")

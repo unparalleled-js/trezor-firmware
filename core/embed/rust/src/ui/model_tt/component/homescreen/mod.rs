@@ -1,8 +1,6 @@
 mod render;
 
 use crate::{
-    micropython::gc::Gc,
-    storage::{get_avatar, get_avatar_len},
     time::{Duration, Instant},
     trezorhal::usb::usb_configured,
     ui::{
@@ -10,21 +8,33 @@ use crate::{
         display::{self, tjpgd::jpeg_info, toif::Icon, Color, Font},
         event::{TouchEvent, USBEvent},
         geometry::{Offset, Point, Rect},
+        layout::util::get_user_custom_image,
         model_tt::{constant, theme::IMAGE_HOMESCREEN},
     },
 };
 
+use crate::{
+    trezorhal::{buffers::BufferJpegWork, display::ToifFormat, uzlib::UZLIB_WINDOW_SIZE},
+    ui::{
+        constant::HEIGHT,
+        display::{tjpgd::BufferInput, toif::Toif},
+        model_tt::component::homescreen::render::{
+            HomescreenJpeg, HomescreenToif, HOMESCREEN_TOIF_SIZE,
+        },
+    },
+};
 use render::{
-    homescreen, homescreen_blurred, HomescreenNotification, HomescreenText, HOMESCREEN_IMAGE_SIZE,
+    homescreen, homescreen_blurred, HomescreenNotification, HomescreenText,
+    HOMESCREEN_IMAGE_HEIGHT, HOMESCREEN_IMAGE_WIDTH,
 };
 
 use super::{theme, Loader, LoaderMsg};
 
 const AREA: Rect = constant::screen();
 const TOP_CENTER: Point = AREA.top_center();
-const LABEL_Y: i16 = 216;
-const LOCKED_Y: i16 = 107;
-const TAP_Y: i16 = 134;
+const LABEL_Y: i16 = HEIGHT - 18;
+const LOCKED_Y: i16 = HEIGHT / 2 - 13;
+const TAP_Y: i16 = HEIGHT / 2 + 14;
 const HOLD_Y: i16 = 35;
 const LOADER_OFFSET: Offset = Offset::y(-10);
 const LOADER_DELAY: Duration = Duration::from_millis(500);
@@ -62,9 +72,10 @@ where
 
     fn level_to_style(level: u8) -> (Color, Icon) {
         match level {
-            2 => (theme::VIOLET, Icon::new(theme::ICON_MAGIC)),
-            1 => (theme::YELLOW, Icon::new(theme::ICON_WARN)),
-            _ => (theme::RED, Icon::new(theme::ICON_WARN)),
+            3 => (theme::YELLOW, theme::ICON_COINJOIN),
+            2 => (theme::VIOLET, theme::ICON_MAGIC),
+            1 => (theme::YELLOW, theme::ICON_WARN),
+            _ => (theme::RED, theme::ICON_WARN),
         }
     }
 
@@ -181,7 +192,7 @@ where
         if self.loader.is_animating() || self.loader.is_completely_grown(Instant::now()) {
             self.paint_loader();
         } else {
-            let mut label_style = theme::TEXT_BOLD;
+            let mut label_style = theme::TEXT_DEMIBOLD;
             label_style.text_color = theme::FG;
 
             let text = HomescreenText {
@@ -193,17 +204,42 @@ where
 
             let notification = self.get_notification();
 
-            let res = get_image();
+            let res = get_user_custom_image();
+            let mut show_default = true;
+
             if let Ok(data) = res {
+                if is_image_jpeg(data.as_ref()) {
+                    let mut input = BufferInput(data.as_ref());
+                    let mut pool = BufferJpegWork::get_cleared();
+                    let mut hs_img = HomescreenJpeg::new(&mut input, pool.buffer.as_mut_slice());
+                    homescreen(
+                        &mut hs_img,
+                        &[text],
+                        notification,
+                        self.paint_notification_only,
+                    );
+                    show_default = false;
+                } else if is_image_toif(data.as_ref()) {
+                    let input = unwrap!(Toif::new(data.as_ref()));
+                    let mut window = [0; UZLIB_WINDOW_SIZE];
+                    let mut hs_img =
+                        HomescreenToif::new(input.decompression_context(Some(&mut window)));
+                    homescreen(
+                        &mut hs_img,
+                        &[text],
+                        notification,
+                        self.paint_notification_only,
+                    );
+                    show_default = false;
+                }
+            }
+
+            if show_default {
+                let mut input = BufferInput(IMAGE_HOMESCREEN);
+                let mut pool = BufferJpegWork::get_cleared();
+                let mut hs_img = HomescreenJpeg::new(&mut input, pool.buffer.as_mut_slice());
                 homescreen(
-                    data.as_ref(),
-                    &[text],
-                    notification,
-                    self.paint_notification_only,
-                );
-            } else {
-                homescreen(
-                    IMAGE_HOMESCREEN,
+                    &mut hs_img,
                     &[text],
                     notification,
                     self.paint_notification_only,
@@ -212,6 +248,7 @@ where
         }
     }
 
+    #[cfg(feature = "ui_bounds")]
     fn bounds(&self, sink: &mut dyn FnMut(Rect)) {
         self.loader.bounds(sink);
         sink(self.pad.area);
@@ -220,10 +257,9 @@ where
 
 #[cfg(feature = "ui_debug")]
 impl<T: AsRef<str>> crate::trace::Trace for Homescreen<T> {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("Homescreen");
-        d.field("label", &self.label.as_ref());
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Homescreen");
+        t.string("label", self.label.as_ref());
     }
 }
 
@@ -262,10 +298,7 @@ where
             ("LOCKED", "Tap to unlock")
         };
 
-        let mut tap_style = theme::TEXT_NORMAL;
-        tap_style.text_color = theme::OFF_WHITE;
-
-        let mut label_style = theme::TEXT_BOLD;
+        let mut label_style = theme::TEXT_DEMIBOLD;
         label_style.text_color = theme::GREY_LIGHT;
 
         let texts: [HomescreenText; 3] = [
@@ -273,11 +306,11 @@ where
                 text: locked,
                 style: theme::TEXT_BOLD,
                 offset: Offset::new(10, LOCKED_Y),
-                icon: Some(Icon::new(theme::ICON_LOCK)),
+                icon: Some(theme::ICON_LOCK),
             },
             HomescreenText {
                 text: tap,
-                style: tap_style,
+                style: theme::TEXT_NORMAL,
                 offset: Offset::new(10, TAP_Y),
                 icon: None,
             },
@@ -289,40 +322,62 @@ where
             },
         ];
 
-        let res = get_image();
+        let res = get_user_custom_image();
+        let mut show_default = true;
+
         if let Ok(data) = res {
-            homescreen_blurred(data.as_ref(), &texts);
-        } else {
-            homescreen_blurred(IMAGE_HOMESCREEN, &texts);
+            if is_image_jpeg(data.as_ref()) {
+                let mut input = BufferInput(data.as_ref());
+                let mut pool = BufferJpegWork::get_cleared();
+                let mut hs_img = HomescreenJpeg::new(&mut input, pool.buffer.as_mut_slice());
+                homescreen_blurred(&mut hs_img, &texts);
+                show_default = false;
+            } else if is_image_toif(data.as_ref()) {
+                let input = unwrap!(Toif::new(data.as_ref()));
+                let mut window = [0; UZLIB_WINDOW_SIZE];
+                let mut hs_img =
+                    HomescreenToif::new(input.decompression_context(Some(&mut window)));
+                homescreen_blurred(&mut hs_img, &texts);
+                show_default = false;
+            }
+        }
+
+        if show_default {
+            let mut input = BufferInput(IMAGE_HOMESCREEN);
+            let mut pool = BufferJpegWork::get_cleared();
+            let mut hs_img = HomescreenJpeg::new(&mut input, pool.buffer.as_mut_slice());
+            homescreen_blurred(&mut hs_img, &texts);
         }
     }
 }
 
-fn get_image() -> Result<Gc<[u8]>, ()> {
-    if let Ok(len) = get_avatar_len() {
-        let result = Gc::<[u8]>::new_slice(len);
-        if let Ok(mut buffer) = result {
-            let buf = unsafe { Gc::<[u8]>::as_mut(&mut buffer) };
-            if get_avatar(buf).is_ok() {
-                let jpeg = jpeg_info(buffer.as_ref());
-                if let Some((size, mcu_height)) = jpeg {
-                    if size.x == HOMESCREEN_IMAGE_SIZE
-                        && size.y == HOMESCREEN_IMAGE_SIZE
-                        && mcu_height <= 16
-                    {
-                        return Ok(buffer);
-                    }
-                }
-            }
+fn is_image_jpeg(buffer: &[u8]) -> bool {
+    let jpeg = jpeg_info(buffer);
+    if let Some((size, mcu_height)) = jpeg {
+        if size.x == HOMESCREEN_IMAGE_WIDTH && size.y == HOMESCREEN_IMAGE_HEIGHT && mcu_height <= 16
+        {
+            return true;
         }
-    };
-    Err(())
+    }
+    false
+}
+
+fn is_image_toif(buffer: &[u8]) -> bool {
+    let toif = Toif::new(buffer);
+    if let Some(toif) = toif {
+        if toif.size().x == HOMESCREEN_TOIF_SIZE
+            && toif.size().y == HOMESCREEN_TOIF_SIZE
+            && toif.format() == ToifFormat::FullColorBE
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(feature = "ui_debug")]
 impl<T> crate::trace::Trace for Lockscreen<T> {
-    fn trace(&self, d: &mut dyn crate::trace::Tracer) {
-        d.open("Lockscreen");
-        d.close();
+    fn trace(&self, t: &mut dyn crate::trace::Tracer) {
+        t.component("Lockscreen");
     }
 }

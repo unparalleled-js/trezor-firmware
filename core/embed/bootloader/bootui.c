@@ -19,9 +19,15 @@
 
 #include <string.h>
 
+#include TREZOR_BOARD
+
 #include "bootui.h"
 #include "display.h"
+#ifdef TREZOR_EMULATOR
+#include "emulator.h"
+#else
 #include "mini_printf.h"
+#endif
 #include "rust_ui.h"
 #include "version.h"
 
@@ -40,6 +46,14 @@
 #define COLOR_BL_DONE COLOR_BL_FG
 #define COLOR_BL_PROCESS COLOR_BL_FG
 #define COLOR_BL_GRAY COLOR_BL_FG
+#endif
+
+#ifndef TREZOR_MODEL_R
+#define BOOT_WAIT_HEIGHT 25
+#define BOOT_WAIT_Y_TOP (DISPLAY_RESY - BOOT_WAIT_HEIGHT)
+#else
+#define BOOT_WAIT_HEIGHT 12
+#define BOOT_WAIT_Y_TOP (DISPLAY_RESY - BOOT_WAIT_HEIGHT)
 #endif
 
 // common shared functions
@@ -73,13 +87,12 @@ void ui_screen_boot(const vendor_header *const vhdr,
 
   display_bar(0, 0, DISPLAY_RESX, DISPLAY_RESY, boot_background);
 
+#ifndef TREZOR_MODEL_R
   int image_top = show_string ? 30 : (DISPLAY_RESY - 120) / 2;
-
   // check whether vendor image is 120x120
-  if (memcmp(vimg, "TOIF\x78\x00\x78\x00", 4) == 0) {
+  if (memcmp(vimg, "TOIF\x78\x00\x78\x00", 8) == 0) {
     uint32_t datalen = *(uint32_t *)(vimg + 8);
-    display_image((DISPLAY_RESX - 120) / 2, image_top, 120, 120, vimg + 12,
-                  datalen);
+    display_image((DISPLAY_RESX - 120) / 2, image_top, vimg, datalen + 12);
   }
 
   if (show_string) {
@@ -91,28 +104,87 @@ void ui_screen_boot(const vendor_header *const vhdr,
     display_text_center(DISPLAY_RESX / 2, DISPLAY_RESY - 5 - 25, ver_str, -1,
                         FONT_NORMAL, COLOR_BL_BG, boot_background);
   }
+#else
+  // check whether vendor image is 24x24
+  if (memcmp(vimg, "TOIG\x18\x00\x18\x00", 8) == 0) {
+    uint32_t datalen = *(uint32_t *)(vimg + 8);
+    display_icon((DISPLAY_RESX - 22) / 2, 0, vimg, datalen + 12, COLOR_BL_BG,
+                 boot_background);
+  }
 
-  PIXELDATA_DIRTY();
+  if (show_string) {
+    char ver_str[64];
+    display_text_center(DISPLAY_RESX / 2, 36, vhdr->vstr, vhdr->vstr_len,
+                        FONT_NORMAL, COLOR_BL_BG, boot_background);
+    format_ver("%d.%d.%d", fw_version, ver_str, sizeof(ver_str));
+    display_text_center(DISPLAY_RESX / 2, 46, ver_str, -1, FONT_NORMAL,
+                        COLOR_BL_BG, boot_background);
+  }
+
+#endif
+
+  display_pixeldata_dirty();
   display_refresh();
 }
 
 void ui_screen_boot_wait(int wait_seconds) {
   char wait_str[16];
   mini_snprintf(wait_str, sizeof(wait_str), "starting in %d s", wait_seconds);
-  display_bar(0, DISPLAY_RESY - 5 - 20, DISPLAY_RESX, 5 + 20, boot_background);
+  display_bar(0, BOOT_WAIT_Y_TOP, DISPLAY_RESX, BOOT_WAIT_HEIGHT,
+              boot_background);
   display_text_center(DISPLAY_RESX / 2, DISPLAY_RESY - 5, wait_str, -1,
                       FONT_NORMAL, COLOR_BL_BG, boot_background);
-  PIXELDATA_DIRTY();
+  display_pixeldata_dirty();
   display_refresh();
 }
 
+#if defined USE_TOUCH
+#include "touch.h"
+
+void ui_click(void) {
+  // flush touch events if any
+  while (touch_read()) {
+  }
+  // wait for TOUCH_START
+  while ((touch_read() & TOUCH_START) == 0) {
+  }
+  // wait for TOUCH_END
+  while ((touch_read() & TOUCH_END) == 0) {
+  }
+  // flush touch events if any
+  while (touch_read()) {
+  }
+}
+
+#elif defined USE_BUTTON
+#include "button.h"
+
+void ui_click(void) {
+  for (;;) {
+    button_read();
+    if (button_state_left() != 0 && button_state_right() != 0) {
+      break;
+    }
+  }
+  for (;;) {
+    button_read();
+    if (button_state_left() != 1 && button_state_right() != 1) {
+      break;
+    }
+  }
+}
+
+#else
+#error "No input method defined"
+#endif
+
 void ui_screen_boot_click(void) {
-  display_bar(0, DISPLAY_RESY - 5 - 20, DISPLAY_RESX, 5 + 20, boot_background);
-  display_text_center(DISPLAY_RESX / 2, DISPLAY_RESY - 5,
-                      "click to continue ...", -1, FONT_NORMAL, COLOR_BL_BG,
-                      boot_background);
-  PIXELDATA_DIRTY();
+  display_bar(0, BOOT_WAIT_Y_TOP, DISPLAY_RESX, BOOT_WAIT_HEIGHT,
+              boot_background);
+  bld_continue_label(boot_background);
+  display_pixeldata_dirty();
   display_refresh();
+  ui_click();
 }
 
 // welcome UI
@@ -120,47 +192,32 @@ void ui_screen_boot_click(void) {
 void ui_screen_welcome(void) { screen_welcome(); }
 
 uint32_t ui_screen_intro(const vendor_header *const vhdr,
-                         const image_header *const hdr) {
+                         const image_header *const hdr, bool fw_ok) {
   char bld_ver[32];
   char ver_str[64];
   format_ver("%d.%d.%d", VERSION_UINT32, bld_ver, sizeof(bld_ver));
   format_ver("%d.%d.%d", hdr->version, ver_str, sizeof(ver_str));
 
-  return screen_intro(bld_ver, vhdr->vstr, vhdr->vstr_len, ver_str);
+  return screen_intro(bld_ver, vhdr->vstr, vhdr->vstr_len, ver_str, fw_ok);
 }
 
-uint32_t ui_screen_menu(void) {
-  char bld_ver[32];
-  format_ver("%d.%d.%d", VERSION_UINT32, bld_ver, sizeof(bld_ver));
-  return screen_menu(bld_ver);
+uint32_t ui_screen_menu(secbool firmware_present) {
+  return screen_menu(firmware_present);
 }
 
 // install UI
 
-uint32_t ui_screen_install_confirm_upgrade(const vendor_header *const vhdr,
-                                           const image_header *const hdr) {
+uint32_t ui_screen_install_confirm(const vendor_header *const vhdr,
+                                   const image_header *const hdr,
+                                   secbool should_keep_seed,
+                                   secbool is_newvendor, int version_cmp) {
   uint8_t fingerprint[32];
   char ver_str[64];
   get_image_fingerprint(hdr, fingerprint);
   format_ver("%d.%d.%d", hdr->version, ver_str, sizeof(ver_str));
   return screen_install_confirm(vhdr->vstr, vhdr->vstr_len, ver_str,
-                                fingerprint, false, false);
-}
-
-uint32_t ui_screen_install_confirm_newvendor_or_downgrade_wipe(
-    const vendor_header *const vhdr, const image_header *const hdr,
-    secbool downgrade_wipe) {
-  uint8_t fingerprint[32];
-  char ver_str[64];
-  get_image_fingerprint(hdr, fingerprint);
-  format_ver("%d.%d.%d", hdr->version, ver_str, sizeof(ver_str));
-  if (downgrade_wipe) {
-    return screen_install_confirm(vhdr->vstr, vhdr->vstr_len, ver_str,
-                                  fingerprint, true, false);
-  } else {
-    return screen_install_confirm(vhdr->vstr, vhdr->vstr_len, ver_str,
-                                  fingerprint, false, true);
-  }
+                                fingerprint, should_keep_seed == sectrue,
+                                is_newvendor == sectrue, version_cmp);
 }
 
 void ui_screen_install_start() {
@@ -186,26 +243,32 @@ void ui_screen_wipe_progress(int pos, int len) {
 }
 
 // done UI
-void ui_screen_done(int restart_seconds, secbool full_redraw) {
-  const char *str;
-  char count_str[24];
-  if (restart_seconds >= 1) {
-    mini_snprintf(count_str, sizeof(count_str), "Done! Restarting in %d s",
-                  restart_seconds);
-    str = count_str;
-  } else {
-    str = "Done! Unplug the device.";
-  }
-
-  screen_install_success(str, initial_setup, full_redraw);
+void ui_screen_done(uint8_t restart_seconds, secbool full_redraw) {
+  screen_install_success(restart_seconds, initial_setup, full_redraw);
 }
 
-void ui_screen_boot_empty(bool firmware_present, bool fading) {
-  screen_boot_empty(firmware_present, fading);
-}
+void ui_screen_boot_empty(bool fading) { screen_boot_empty(fading); }
 
 // error UI
 void ui_screen_fail(void) { screen_install_fail(); }
+
+#ifdef USE_OPTIGA
+uint32_t ui_screen_unlock_bootloader_confirm(void) {
+  return screen_unlock_bootloader_confirm();
+}
+
+void ui_screen_install_restricted(void) {
+  display_clear();
+  screen_fatal_error_rust(
+      "INSTALL RESTRICTED",
+      "Installation of custom firmware is currently restricted.",
+      "Please visit\ntrezor.io/bootloader");
+
+  display_refresh();
+}
+#else
+void ui_screen_install_restricted(void) { screen_install_fail(); }
+#endif
 
 // general functions
 

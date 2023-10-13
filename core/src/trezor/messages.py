@@ -35,9 +35,11 @@ if TYPE_CHECKING:
     from trezor.enums import CardanoTxSigningMode  # noqa: F401
     from trezor.enums import CardanoTxWitnessType  # noqa: F401
     from trezor.enums import DebugButton  # noqa: F401
+    from trezor.enums import DebugPhysicalButton  # noqa: F401
     from trezor.enums import DebugSwipeDirection  # noqa: F401
     from trezor.enums import DecredStakingSpendType  # noqa: F401
     from trezor.enums import EthereumDataType  # noqa: F401
+    from trezor.enums import EthereumDefinitionType  # noqa: F401
     from trezor.enums import FailureType  # noqa: F401
     from trezor.enums import HomescreenFormat  # noqa: F401
     from trezor.enums import InputScriptType  # noqa: F401
@@ -63,12 +65,14 @@ if TYPE_CHECKING:
     class BinanceGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -128,6 +132,7 @@ if TYPE_CHECKING:
         memo: "str | None"
         sequence: "int"
         source: "int"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -139,6 +144,7 @@ if TYPE_CHECKING:
             address_n: "list[int] | None" = None,
             chain_id: "str | None" = None,
             memo: "str | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -155,12 +161,14 @@ if TYPE_CHECKING:
     class BinanceTransferMsg(protobuf.MessageType):
         inputs: "list[BinanceInputOutput]"
         outputs: "list[BinanceInputOutput]"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             inputs: "list[BinanceInputOutput] | None" = None,
             outputs: "list[BinanceInputOutput] | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -459,6 +467,7 @@ if TYPE_CHECKING:
         multisig: "MultisigRedeemScriptType | None"
         script_type: "InputScriptType"
         ignore_xpub_magic: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -469,6 +478,7 @@ if TYPE_CHECKING:
             multisig: "MultisigRedeemScriptType | None" = None,
             script_type: "InputScriptType | None" = None,
             ignore_xpub_magic: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -598,6 +608,7 @@ if TYPE_CHECKING:
         decred_staking_ticket: "bool"
         serialize: "bool"
         coinjoin_request: "CoinJoinRequest | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -615,6 +626,7 @@ if TYPE_CHECKING:
             decred_staking_ticket: "bool | None" = None,
             serialize: "bool | None" = None,
             coinjoin_request: "CoinJoinRequest | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -1284,6 +1296,7 @@ if TYPE_CHECKING:
         network_id: "int"
         address_parameters: "CardanoAddressParametersType"
         derivation_type: "CardanoDerivationType"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -1293,6 +1306,7 @@ if TYPE_CHECKING:
             address_parameters: "CardanoAddressParametersType",
             derivation_type: "CardanoDerivationType",
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -1370,6 +1384,7 @@ if TYPE_CHECKING:
         has_collateral_return: "bool"
         total_collateral: "int | None"
         reference_inputs_count: "int"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -1395,6 +1410,7 @@ if TYPE_CHECKING:
             has_collateral_return: "bool | None" = None,
             total_collateral: "int | None" = None,
             reference_inputs_count: "int | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -2107,6 +2123,12 @@ if TYPE_CHECKING:
         busy: "bool | None"
         homescreen_format: "HomescreenFormat | None"
         hide_passphrase_from_host: "bool | None"
+        internal_model: "str | None"
+        unit_color: "int | None"
+        unit_btconly: "bool | None"
+        homescreen_width: "int | None"
+        homescreen_height: "int | None"
+        bootloader_locked: "bool | None"
 
         def __init__(
             self,
@@ -2151,6 +2173,12 @@ if TYPE_CHECKING:
             busy: "bool | None" = None,
             homescreen_format: "HomescreenFormat | None" = None,
             hide_passphrase_from_host: "bool | None" = None,
+            internal_model: "str | None" = None,
+            unit_color: "int | None" = None,
+            unit_btconly: "bool | None" = None,
+            homescreen_width: "int | None" = None,
+            homescreen_height: "int | None" = None,
+            bootloader_locked: "bool | None" = None,
         ) -> None:
             pass
 
@@ -2348,6 +2376,36 @@ if TYPE_CHECKING:
 
         @classmethod
         def is_type_of(cls, msg: Any) -> TypeGuard["FirmwareHash"]:
+            return isinstance(msg, cls)
+
+    class AuthenticateDevice(protobuf.MessageType):
+        challenge: "bytes"
+
+        def __init__(
+            self,
+            *,
+            challenge: "bytes",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["AuthenticateDevice"]:
+            return isinstance(msg, cls)
+
+    class AuthenticityProof(protobuf.MessageType):
+        certificates: "list[bytes]"
+        signature: "bytes"
+
+        def __init__(
+            self,
+            *,
+            signature: "bytes",
+            certificates: "list[bytes] | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["AuthenticityProof"]:
             return isinstance(msg, cls)
 
     class WipeDevice(protobuf.MessageType):
@@ -2610,6 +2668,18 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["UnlockedPathRequest"]:
             return isinstance(msg, cls)
 
+    class ShowDeviceTutorial(protobuf.MessageType):
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["ShowDeviceTutorial"]:
+            return isinstance(msg, cls)
+
+    class UnlockBootloader(protobuf.MessageType):
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["UnlockBootloader"]:
+            return isinstance(msg, cls)
+
     class DebugLinkDecision(protobuf.MessageType):
         button: "DebugButton | None"
         swipe: "DebugSwipeDirection | None"
@@ -2618,6 +2688,7 @@ if TYPE_CHECKING:
         y: "int | None"
         wait: "bool | None"
         hold_ms: "int | None"
+        physical_button: "DebugPhysicalButton | None"
 
         def __init__(
             self,
@@ -2629,6 +2700,7 @@ if TYPE_CHECKING:
             y: "int | None" = None,
             wait: "bool | None" = None,
             hold_ms: "int | None" = None,
+            physical_button: "DebugPhysicalButton | None" = None,
         ) -> None:
             pass
 
@@ -2637,12 +2709,12 @@ if TYPE_CHECKING:
             return isinstance(msg, cls)
 
     class DebugLinkLayout(protobuf.MessageType):
-        lines: "list[str]"
+        tokens: "list[str]"
 
         def __init__(
             self,
             *,
-            lines: "list[str] | None" = None,
+            tokens: "list[str] | None" = None,
         ) -> None:
             pass
 
@@ -2666,11 +2738,13 @@ if TYPE_CHECKING:
 
     class DebugLinkRecordScreen(protobuf.MessageType):
         target_directory: "str | None"
+        refresh_index: "int"
 
         def __init__(
             self,
             *,
             target_directory: "str | None" = None,
+            refresh_index: "int | None" = None,
         ) -> None:
             pass
 
@@ -2709,12 +2783,12 @@ if TYPE_CHECKING:
         recovery_word_pos: "int | None"
         reset_word_pos: "int | None"
         mnemonic_type: "BackupType | None"
-        layout_lines: "list[str]"
+        tokens: "list[str]"
 
         def __init__(
             self,
             *,
-            layout_lines: "list[str] | None" = None,
+            tokens: "list[str] | None" = None,
             layout: "bytes | None" = None,
             pin: "str | None" = None,
             matrix: "str | None" = None,
@@ -2848,15 +2922,23 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["DebugLinkWatchLayout"]:
             return isinstance(msg, cls)
 
+    class DebugLinkResetDebugEvents(protobuf.MessageType):
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["DebugLinkResetDebugEvents"]:
+            return isinstance(msg, cls)
+
     class EosGetPublicKey(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -2885,6 +2967,7 @@ if TYPE_CHECKING:
         chain_id: "bytes"
         header: "EosTxHeader"
         num_actions: "int"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -2893,6 +2976,7 @@ if TYPE_CHECKING:
             header: "EosTxHeader",
             num_actions: "int",
             address_n: "list[int] | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3372,10 +3456,69 @@ if TYPE_CHECKING:
         def is_type_of(cls, msg: Any) -> TypeGuard["EosActionUnknown"]:
             return isinstance(msg, cls)
 
+    class EthereumNetworkInfo(protobuf.MessageType):
+        chain_id: "int"
+        symbol: "str"
+        slip44: "int"
+        name: "str"
+
+        def __init__(
+            self,
+            *,
+            chain_id: "int",
+            symbol: "str",
+            slip44: "int",
+            name: "str",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["EthereumNetworkInfo"]:
+            return isinstance(msg, cls)
+
+    class EthereumTokenInfo(protobuf.MessageType):
+        address: "bytes"
+        chain_id: "int"
+        symbol: "str"
+        decimals: "int"
+        name: "str"
+
+        def __init__(
+            self,
+            *,
+            address: "bytes",
+            chain_id: "int",
+            symbol: "str",
+            decimals: "int",
+            name: "str",
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["EthereumTokenInfo"]:
+            return isinstance(msg, cls)
+
+    class EthereumDefinitions(protobuf.MessageType):
+        encoded_network: "bytes | None"
+        encoded_token: "bytes | None"
+
+        def __init__(
+            self,
+            *,
+            encoded_network: "bytes | None" = None,
+            encoded_token: "bytes | None" = None,
+        ) -> None:
+            pass
+
+        @classmethod
+        def is_type_of(cls, msg: Any) -> TypeGuard["EthereumDefinitions"]:
+            return isinstance(msg, cls)
+
     class EthereumSignTypedData(protobuf.MessageType):
         address_n: "list[int]"
         primary_type: "str"
         metamask_v4_compat: "bool"
+        definitions: "EthereumDefinitions | None"
 
         def __init__(
             self,
@@ -3383,6 +3526,7 @@ if TYPE_CHECKING:
             primary_type: "str",
             address_n: "list[int] | None" = None,
             metamask_v4_compat: "bool | None" = None,
+            definitions: "EthereumDefinitions | None" = None,
         ) -> None:
             pass
 
@@ -3517,12 +3661,16 @@ if TYPE_CHECKING:
     class EthereumGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        encoded_network: "bytes | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            encoded_network: "bytes | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3555,6 +3703,8 @@ if TYPE_CHECKING:
         data_length: "int"
         chain_id: "int"
         tx_type: "int | None"
+        definitions: "EthereumDefinitions | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3569,6 +3719,8 @@ if TYPE_CHECKING:
             data_initial_chunk: "bytes | None" = None,
             data_length: "int | None" = None,
             tx_type: "int | None" = None,
+            definitions: "EthereumDefinitions | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3588,6 +3740,8 @@ if TYPE_CHECKING:
         data_length: "int"
         chain_id: "int"
         access_list: "list[EthereumAccessList]"
+        definitions: "EthereumDefinitions | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3603,6 +3757,8 @@ if TYPE_CHECKING:
             access_list: "list[EthereumAccessList] | None" = None,
             to: "str | None" = None,
             data_initial_chunk: "bytes | None" = None,
+            definitions: "EthereumDefinitions | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -3647,12 +3803,14 @@ if TYPE_CHECKING:
     class EthereumSignMessage(protobuf.MessageType):
         address_n: "list[int]"
         message: "bytes"
+        encoded_network: "bytes | None"
 
         def __init__(
             self,
             *,
             message: "bytes",
             address_n: "list[int] | None" = None,
+            encoded_network: "bytes | None" = None,
         ) -> None:
             pass
 
@@ -3698,6 +3856,7 @@ if TYPE_CHECKING:
         address_n: "list[int]"
         domain_separator_hash: "bytes"
         message_hash: "bytes | None"
+        encoded_network: "bytes | None"
 
         def __init__(
             self,
@@ -3705,6 +3864,7 @@ if TYPE_CHECKING:
             domain_separator_hash: "bytes",
             address_n: "list[int] | None" = None,
             message_hash: "bytes | None" = None,
+            encoded_network: "bytes | None" = None,
         ) -> None:
             pass
 
@@ -3831,6 +3991,7 @@ if TYPE_CHECKING:
         account: "int | None"
         minor: "int | None"
         payment_id: "bytes | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -3841,6 +4002,7 @@ if TYPE_CHECKING:
             account: "int | None" = None,
             minor: "int | None" = None,
             payment_id: "bytes | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4492,6 +4654,7 @@ if TYPE_CHECKING:
         client_version: "int | None"
         hard_fork: "int | None"
         monero_version: "bytes | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -4511,6 +4674,7 @@ if TYPE_CHECKING:
             client_version: "int | None" = None,
             hard_fork: "int | None" = None,
             monero_version: "bytes | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4596,6 +4760,7 @@ if TYPE_CHECKING:
         address_n: "list[int]"
         network: "int"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -4603,6 +4768,7 @@ if TYPE_CHECKING:
             address_n: "list[int] | None" = None,
             network: "int | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4634,6 +4800,7 @@ if TYPE_CHECKING:
         supply_change: "NEMMosaicSupplyChange | None"
         aggregate_modification: "NEMAggregateModification | None"
         importance_transfer: "NEMImportanceTransfer | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -4647,6 +4814,7 @@ if TYPE_CHECKING:
             supply_change: "NEMMosaicSupplyChange | None" = None,
             aggregate_modification: "NEMAggregateModification | None" = None,
             importance_transfer: "NEMImportanceTransfer | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4919,12 +5087,14 @@ if TYPE_CHECKING:
     class RippleGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -4953,6 +5123,7 @@ if TYPE_CHECKING:
         sequence: "int"
         last_ledger_sequence: "int | None"
         payment: "RipplePayment"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -4963,6 +5134,7 @@ if TYPE_CHECKING:
             address_n: "list[int] | None" = None,
             flags: "int | None" = None,
             last_ledger_sequence: "int | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5025,12 +5197,14 @@ if TYPE_CHECKING:
     class StellarGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5405,12 +5579,14 @@ if TYPE_CHECKING:
     class TezosGetAddress(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5435,12 +5611,14 @@ if TYPE_CHECKING:
     class TezosGetPublicKey(protobuf.MessageType):
         address_n: "list[int]"
         show_display: "bool | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
             *,
             address_n: "list[int] | None" = None,
             show_display: "bool | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 
@@ -5471,6 +5649,7 @@ if TYPE_CHECKING:
         delegation: "TezosDelegationOp | None"
         proposal: "TezosProposalOp | None"
         ballot: "TezosBallotOp | None"
+        chunkify: "bool | None"
 
         def __init__(
             self,
@@ -5483,6 +5662,7 @@ if TYPE_CHECKING:
             delegation: "TezosDelegationOp | None" = None,
             proposal: "TezosProposalOp | None" = None,
             ballot: "TezosBallotOp | None" = None,
+            chunkify: "bool | None" = None,
         ) -> None:
             pass
 

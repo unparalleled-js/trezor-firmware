@@ -6,10 +6,9 @@ if TYPE_CHECKING:
     from typing import Awaitable
 
     from trezor.messages import ChangePin, Success
-    from trezor.wire import Context
 
 
-async def change_pin(ctx: Context, msg: ChangePin) -> Success:
+async def change_pin(msg: ChangePin) -> Success:
     from storage.device import is_initialized
     from trezor.messages import Success
     from trezor.ui.layouts import show_success
@@ -25,74 +24,73 @@ async def change_pin(ctx: Context, msg: ChangePin) -> Success:
         raise wire.NotInitialized("Device is not initialized")
 
     # confirm that user wants to change the pin
-    await _require_confirm_change_pin(ctx, msg)
+    await _require_confirm_change_pin(msg)
 
     # get old pin
-    curpin, salt = await request_pin_and_sd_salt(ctx, "Enter old PIN")
+    curpin, salt = await request_pin_and_sd_salt("Enter PIN")
 
     # if changing pin, pre-check the entered pin before getting new pin
     if curpin and not msg.remove:
         if not config.check_pin(curpin, salt):
-            await error_pin_invalid(ctx)
+            await error_pin_invalid()
 
     # get new pin
     if not msg.remove:
-        newpin = await request_pin_confirm(ctx)
+        newpin = await request_pin_confirm()
     else:
         newpin = ""
 
     # write into storage
     if not config.change_pin(curpin, newpin, salt, salt):
         if newpin:
-            await error_pin_matches_wipe_code(ctx)
+            await error_pin_matches_wipe_code()
         else:
-            await error_pin_invalid(ctx)
+            await error_pin_invalid()
 
     if newpin:
         if curpin:
-            msg_screen = "You have successfully changed your PIN."
+            msg_screen = "PIN changed."
             msg_wire = "PIN changed"
         else:
-            msg_screen = "You have successfully enabled PIN protection."
+            msg_screen = "PIN protection\nturned on."
             msg_wire = "PIN enabled"
     else:
-        msg_screen = "You have successfully disabled PIN protection."
+        msg_screen = "PIN protection\nturned off."
         msg_wire = "PIN removed"
 
-    await show_success(ctx, "success_pin", msg_screen)
+    await show_success("success_pin", msg_screen)
     return Success(message=msg_wire)
 
 
-def _require_confirm_change_pin(ctx: Context, msg: ChangePin) -> Awaitable[None]:
-    from trezor.ui.layouts import confirm_action
+def _require_confirm_change_pin(msg: ChangePin) -> Awaitable[None]:
+    from trezor.ui.layouts import confirm_action, confirm_set_new_pin
 
     has_pin = config.has_pin()
 
+    title = "PIN settings"
+
     if msg.remove and has_pin:  # removing pin
         return confirm_action(
-            ctx,
-            "set_pin",
-            "PIN settings",
-            description="Do you want to disable PIN protection?",
-            verb="Disable",
+            "disable_pin",
+            title,
+            description="Are you sure you want to turn off PIN protection?",
+            verb="Turn off",
         )
 
     if not msg.remove and has_pin:  # changing pin
         return confirm_action(
-            ctx,
-            "set_pin",
-            "PIN settings",
-            description="Do you want to change your PIN?",
+            "change_pin",
+            title,
+            description="Change PIN?",
             verb="Change",
         )
 
     if not msg.remove and not has_pin:  # setting new pin
-        return confirm_action(
-            ctx,
+        return confirm_set_new_pin(
             "set_pin",
-            "PIN settings",
-            description="Do you want to enable PIN protection?",
-            verb="Enable",
+            title,
+            "PIN",
+            "PIN will be required to access this device.",
         )
 
     # removing non-existing PIN
